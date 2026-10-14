@@ -1,0 +1,274 @@
+data "azurerm_client_config" "current" {}
+
+locals {
+  subscription_id = data.azurerm_client_config.current.subscription_id
+}
+
+# --- Resource group -----------------------------------------------------------------------------
+
+resource "azurerm_resource_group" "this" {
+  count    = var.resource_group_name == null ? 0 : 1
+  name     = var.resource_group_name
+  location = var.default_location
+  tags     = var.tags
+}
+
+data "azurerm_resource_group" "existing" {
+  count = var.existing_resource_group_name == null ? 0 : 1
+  name  = var.existing_resource_group_name
+}
+
+locals {
+  # Referencing the resource/data source rather than the variable keeps the dependency edges.
+  resource_group_name = var.resource_group_name == null ? data.azurerm_resource_group.existing[0].name : azurerm_resource_group.this[0].name
+}
+
+# --- Networking ---------------------------------------------------------------------------------
+
+module "network" {
+  source = "../../modules-internal/network"
+
+  vnet_name           = var.cluster_name
+  resource_group_name = local.resource_group_name
+  location            = var.default_location
+
+  existing_vnet_name                = var.existing_vnet_name
+  existing_vnet_resource_group_name = var.existing_vnet_resource_group_name
+  vnet_cidr                         = var.vnet_cidr
+  nodes_subnet_cidr                 = var.nodes_subnet_cidr
+  apiserver_subnet_cidr             = var.apiserver_subnet_cidr
+  bastion_subnet_cidr               = var.bastion_subnet_cidr
+  peerings                          = var.vnet_peerings
+  create_bastion_subnet             = var.create_bastion
+
+  tags = var.tags
+}
+
+# --- Cluster ------------------------------------------------------------------------------------
+
+locals {
+  acr_id_prefix = "/providers/Microsoft.ContainerRegistry/registries"
+
+  docker_acr_ids = { for r in var.docker_acr_registries :
+    "${r.resource_group_name}/${r.name}" => "/subscriptions/${r.subscription_id}/resourceGroups/${r.resource_group_name}${local.acr_id_prefix}/${r.name}"
+  }
+  generic_acr_ids = { for r in var.generic_acr_registries :
+    "${r.resource_group_name}/${r.name}" => "/subscriptions/${r.subscription_id}/resourceGroups/${r.resource_group_name}${local.acr_id_prefix}/${r.name}"
+  }
+}
+
+module "cluster" {
+  source = "../../modules-internal/aks-cluster"
+
+  cluster_name        = var.cluster_name
+  location            = var.default_location
+  resource_group_name = local.resource_group_name
+  kubernetes_version  = var.kubernetes_version
+  sku_tier            = var.managed_cluster_sku_tier
+
+  private_cluster_enabled = var.private_cluster_enabled
+
+  nodes_subnet_id     = module.network.nodes_subnet_id
+  apiserver_subnet_id = module.network.apiserver_subnet_id
+  vnet_id             = module.network.vnet_id
+
+  availability_zones        = var.availability_zones
+  core_pool_vm_size         = var.core_worker_pool_vm_size
+  core_pool_os_disk_size_gb = var.core_worker_pool_os_disk_size
+
+  azure_rbac_enabled = var.azure_rbac.enabled
+  principal_ids = var.azure_rbac.enabled ? {
+    cluster_admin = var.azure_rbac.cluster_admin_principal_ids
+    admin         = var.azure_rbac.admin_principal_ids
+    writer        = var.azure_rbac.writer_principal_ids
+    reader        = var.azure_rbac.reader_principal_ids
+  } : {}
+  node_provisioning_mode         = var.node_provisioning_mode
+  enable_azure_container_storage = var.enable_azure_container_storage
+  acr_ids                        = local.docker_acr_ids
+  create_gateway_public_ip       = var.create_gateway_public_ip
+
+  tags = var.tags
+}
+
+# --- Bastion ------------------------------------------------------------------------------------
+
+module "bastion" {
+  source = "../../modules-internal/bastion"
+  count  = var.create_bastion ? 1 : 0
+
+  name                = "${var.cluster_name}-bastion"
+  resource_group_name = local.resource_group_name
+  location            = var.default_location
+  subnet_id           = module.network.bastion_subnet_id
+  subnet_cidr         = module.network.bastion_subnet_cidr
+
+  apiserver_subnet_id   = module.network.apiserver_subnet_id
+  apiserver_subnet_cidr = module.network.apiserver_subnet_cidr
+  nodes_subnet_id       = module.network.nodes_subnet_id
+
+  # Only cluster admins may tunnel in.
+  tunnel_principal_ids = var.azure_rbac.enabled ? var.azure_rbac.cluster_admin_principal_ids : []
+
+  tags = var.tags
+}
+
+# --- Key Vault ----------------------------------------------------------------------------------
+
+resource "random_string" "key_vault_suffix" {
+  count   = var.create_azure_key_vault ? 1 : 0
+  length  = 8
+  special = false
+  upper   = false
+}
+
+resource "azurerm_key_vault" "this" {
+  count = var.create_azure_key_vault ? 1 : 0
+  # Ensure the Key Vault name does not exceed 24 characters, as required by Azure. When the name is directly set, we already have a
+  # variable validation. When it's autogenerated, it enforces the prefix is short enough to keep the total length within 24 characters.
+  name                       = coalesce(var.azure_key_vault_name, "${trimsuffix(substr(var.cluster_name, 0, 15), "-")}-${random_string.key_vault_suffix[0].result}")
+  resource_group_name        = local.resource_group_name
+  location                   = var.default_location
+  tenant_id                  = data.azurerm_client_config.current.tenant_id
+  sku_name                   = "standard"
+  rbac_authorization_enabled = true
+
+  enabled_for_deployment          = true
+  enabled_for_template_deployment = true
+  enabled_for_disk_encryption     = true
+
+  tags = var.tags
+}
+
+locals {
+  # Guarded here rather than at the use site: a local is evaluated whenever it is referenced
+  # anywhere, so a conditional around the reference would not stop these attribute lookups.
+  existing_azure_key_vault = var.existing_azure_key_vault == null ? null : {
+    name                = var.existing_azure_key_vault.name
+    resource_group_name = coalesce(var.existing_azure_key_vault.resource_group_name, local.resource_group_name)
+    subscription_id     = coalesce(var.existing_azure_key_vault.subscription_id, local.subscription_id)
+  }
+  # Keyed by a label rather than the vault ID, which is unknown until apply.
+  # Its final shape is:
+  # {
+  #   created  = "<id of the created key vault>"
+  #   existing = "<id of the existing key vault>"
+  # }
+  key_vault_ids = merge(
+    var.create_azure_key_vault ? { created = azurerm_key_vault.this[0].id } : {},
+    var.existing_azure_key_vault == null ? {} : {
+      existing = "/subscriptions/${local.existing_azure_key_vault.subscription_id}/resourceGroups/${local.existing_azure_key_vault.resource_group_name}/providers/Microsoft.KeyVault/vaults/${local.existing_azure_key_vault.name}"
+    },
+  )
+
+  # Cluster admins manage the vault this recipe creates; an existing vault keeps its own grants.
+  created_key_vault_admin_grants = var.create_azure_key_vault ? {
+    for pair in setproduct(var.azure_rbac.cluster_admin_principal_ids, ["Key Vault Administrator"]) :
+    "${pair[0]}-${pair[1]}" => { principal_id = pair[0], role = pair[1] }
+  } : {}
+}
+
+resource "azurerm_role_assignment" "created_key_vault_admins" {
+  for_each = local.created_key_vault_admin_grants
+
+  principal_id         = each.value.principal_id
+  principal_type       = "Group"
+  role_definition_name = each.value.role
+  scope                = azurerm_key_vault.this[0].id
+}
+
+module "postgres" {
+  source = "../../modules-internal/postgres-flexible-server"
+  count  = var.postgres == null ? 0 : 1
+
+  name                = coalesce(var.postgres.name, "${var.cluster_name}-postgres")
+  resource_group_name = local.resource_group_name
+  location            = var.default_location
+
+  vnet_id                      = module.network.vnet_id
+  subnet_cidr                  = var.postgres.subnet_cidr != null ? var.postgres.subnet_cidr : cidrsubnet(module.network.vnet_cidr, module.network.subnet_newbits, 3)
+  existing_private_dns_zone_id = var.postgres.existing_private_dns_zone_id
+
+  postgres_version      = var.postgres.postgres_version
+  sku_name              = var.postgres.sku_name
+  zone                  = var.postgres.zone
+  storage               = var.postgres.storage
+  backup_retention_days = var.postgres.backup_retention_days
+  maintenance_window    = var.postgres.maintenance_window
+  server_parameters     = var.postgres.server_parameters
+  extensions            = var.postgres.extensions
+
+  administrator_login            = var.postgres.administrator_login
+  administrator_password         = var.postgres_administrator_password
+  administrator_password_version = var.postgres.administrator_password_version
+
+  key_vault_id = var.existing_azure_key_vault != null ? local.key_vault_ids["existing"] : azurerm_key_vault.this[0].id
+
+  tags = var.tags
+}
+
+# --- DNS ----------------------------------------------------------------------------------------
+
+module "dns_child_zone" {
+  source = "../../modules-internal/dns-child-zone"
+  count  = var.dns_zone == null ? 0 : 1
+
+  providers = { azurerm.parent = azurerm.parent_dns }
+
+  resource_group_name                 = local.resource_group_name
+  dns_zone                            = var.dns_zone
+  dns_enable_delegation               = var.dns_enable_delegation
+  dns_parent_zone_resource_group_name = var.dns_parent_zone_resource_group_name
+  tags                                = var.tags
+}
+
+# --- Workload identities ------------------------------------------------------------------------
+
+# Every ServiceAccount that needs to reach Azure, and what it is allowed to do there. The client ID
+# of each goes on the ServiceAccount as the azure.workload.identity/client-id annotation.
+locals {
+  workload_identities = merge(
+    {
+      "external-secrets" = {
+        namespace            = "external-secrets"
+        service_account_name = "external-secrets"
+        role_assignments = { for label, id in local.key_vault_ids :
+          "keyvault-${label}" => { role_definition_name = "Key Vault Secrets User", scope = id }
+        }
+      }
+    },
+
+    # external-dns writes records; cert-manager writes the TXT records for DNS-01 challenges.
+    var.dns_zone == null ? {} : { for name in ["external-dns", "cert-manager"] : name => {
+      namespace            = name
+      service_account_name = name
+      role_assignments = {
+        child-zone = { role_definition_name = "DNS Zone Contributor", scope = module.dns_child_zone[0].id }
+      }
+    } },
+
+    # One per Complexio installation: pulls model artifacts from the generic registries.
+    { for ns in var.k8s_namespaces : "inference-worker/${ns}" => {
+      namespace            = ns
+      service_account_name = "inference-worker"
+      role_assignments = { for label, id in local.generic_acr_ids :
+        "acr-${label}" => { role_definition_name = "AcrPull", scope = id }
+      }
+    } },
+  )
+}
+
+module "workload_identity" {
+  source   = "../../modules-internal/workload-identity"
+  for_each = local.workload_identities
+
+  name_prefix         = module.cluster.name
+  resource_group_name = local.resource_group_name
+  location            = var.default_location
+  oidc_issuer_url     = module.cluster.oidc_issuer_url
+  tags                = var.tags
+
+  namespace            = each.value.namespace
+  service_account_name = each.value.service_account_name
+  role_assignments     = each.value.role_assignments
+}
