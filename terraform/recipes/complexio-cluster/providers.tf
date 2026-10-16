@@ -11,7 +11,16 @@ variable "dns_parent_zone_subscription_id" {
 
 provider "azurerm" {
   subscription_id = var.subscription_id
-  features {}
+  features {
+    # The postgres module restarts the server once, after all its parameters are written.
+    postgresql_flexible_server {
+      restart_server_on_configuration_value_change = false
+    }
+  }
+}
+
+provider "azapi" {
+  subscription_id = var.subscription_id
 }
 
 # The parent DNS zone frequently lives in a different subscription from the cluster.

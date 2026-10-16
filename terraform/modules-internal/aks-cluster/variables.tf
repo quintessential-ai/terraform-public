@@ -132,18 +132,6 @@ variable "enable_azure_container_storage" {
   default     = true
 }
 
-variable "azure_container_storage_pool_type" {
-  description = "Storage pool type passed to --enable-azure-container-storage."
-  type        = string
-  default     = "ephemeralDisk"
-
-  # This value is interpolated into a shell command, so keep it to the enum the CLI accepts.
-  validation {
-    condition     = contains(["azureDisk", "ephemeralDisk", "elasticSan"], var.azure_container_storage_pool_type)
-    error_message = "Must be one of azureDisk, ephemeralDisk or elasticSan."
-  }
-}
-
 variable "acr_ids" {
   description = "Container registries the kubelet may pull images from, keyed by a plan-time-stable name."
   type        = map(string)

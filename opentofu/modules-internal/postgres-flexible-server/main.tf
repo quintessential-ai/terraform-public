@@ -25,6 +25,11 @@ resource "azurerm_subnet" "this" {
       actions = ["Microsoft.Network/virtualNetworks/subnets/join/action"]
     }
   }
+
+  # Azure adds this endpoint to the subnet when it creates or updates the server. Ignore it.
+  lifecycle {
+    ignore_changes = [service_endpoint]
+  }
 }
 
 # --- Private DNS ----------------------------------------------------------------------------------
@@ -82,6 +87,9 @@ resource "azurerm_postgresql_flexible_server" "this" {
 
   lifecycle {
     prevent_destroy = true
+    # When zone is unset, Azure picks one and the next plan would set it back to null, which Azure
+    # rejects: a server only changes zone by failing over to its standby.
+    ignore_changes = [zone]
   }
 }
 
@@ -148,20 +156,43 @@ locals {
     "pg_stat_statements.track"            = "all"
     "pg_stat_statements.max"              = 10000
     "pg_stat_statements.track_utility"    = "off"
-    "pgbouncer.enabled"                   = "true"
-    "pgbouncer.max_prepared_statements"   = 256
   }
 
   server_parameters = merge(
     { for name, value in local.default_server_parameters : name => tostring(value) },
     var.server_parameters,
   )
+
+  default_pgbouncer_parameters = {
+    "pgbouncer.enabled"                 = "true"
+    "pgbouncer.max_prepared_statements" = "256"
+  }
+
+  pgbouncer_parameters = merge(
+    { for name, value in local.default_pgbouncer_parameters : name => tostring(value) },
+    var.pgbouncer_parameters,
+  )
+  # The other pgbouncer.* parameters exist only while pgbouncer is on: Azure answers 404 for them
+  # otherwise.
+  pgbouncer_enabled = lower(local.pgbouncer_parameters["pgbouncer.enabled"]) == "true"
+  pgbouncer_settings = {
+    for name, value in local.pgbouncer_parameters : name => value
+    if name != "pgbouncer.enabled" && local.pgbouncer_enabled
+  }
 }
+
+# A parameter that leaves the configuration keeps its value on the server (destroy = false), instead
+# of being reset to its default: the resets ran one at a time and made a destroy take up to two
+# hours, and deleting the server discards the parameters anyway.
 
 resource "azurerm_postgresql_flexible_server_configuration" "extensions" {
   name      = "azure.extensions"
   server_id = azurerm_postgresql_flexible_server.this.id
   value     = join(",", var.extensions)
+
+  lifecycle {
+    destroy = false
+  }
 }
 
 resource "azurerm_postgresql_flexible_server_configuration" "this" {
@@ -171,6 +202,115 @@ resource "azurerm_postgresql_flexible_server_configuration" "this" {
   value     = each.value
 
   depends_on = [azurerm_postgresql_flexible_server_configuration.extensions]
+
+  lifecycle {
+    destroy = false
+  }
+}
+
+resource "azurerm_postgresql_flexible_server_configuration" "pgbouncer_enabled" {
+  name      = "pgbouncer.enabled"
+  server_id = azurerm_postgresql_flexible_server.this.id
+  value     = local.pgbouncer_parameters["pgbouncer.enabled"]
+
+  depends_on = [azurerm_postgresql_flexible_server_configuration.extensions]
+
+  lifecycle {
+    destroy = false
+  }
+}
+
+# Depends on pgbouncer.enabled, so these are set once pgbouncer is on.
+resource "azurerm_postgresql_flexible_server_configuration" "pgbouncer" {
+  for_each  = local.pgbouncer_settings
+  name      = each.key
+  server_id = azurerm_postgresql_flexible_server.this.id
+  value     = each.value
+
+  depends_on = [azurerm_postgresql_flexible_server_configuration.pgbouncer_enabled]
+
+  lifecycle {
+    destroy = false
+  }
+}
+
+# --- Restart --------------------------------------------------------------------------------------
+
+# Static parameters take effect only after a restart. For this reason, we check which parameters
+# are static and trigger a single server restart if they change. This only saves restarts when
+# the provider is configured with `restart_server_on_configuration_value_change = false`.
+
+# Lets the classification below be read after every parameter is written on the first apply.
+resource "terraform_data" "server_id" {
+  input = azurerm_postgresql_flexible_server.this.id
+
+  depends_on = [
+    azurerm_postgresql_flexible_server_configuration.extensions,
+    azurerm_postgresql_flexible_server_configuration.this,
+    azurerm_postgresql_flexible_server_configuration.pgbouncer_enabled,
+    azurerm_postgresql_flexible_server_configuration.pgbouncer,
+  ]
+}
+
+data "azapi_resource_list" "configurations" {
+  type                   = "Microsoft.DBforPostgreSQL/flexibleServers/configurations@2025-08-01"
+  parent_id              = terraform_data.server_id.output
+  response_export_values = { dynamic = "value[?properties.isDynamicConfig].name" }
+}
+
+locals {
+  written_parameters = merge(
+    local.server_parameters,
+    { "pgbouncer.enabled" = local.pgbouncer_parameters["pgbouncer.enabled"] },
+    local.pgbouncer_settings,
+    { "azure.extensions" = join(",", var.extensions) },
+  )
+  # A parameter Azure doesn't list as dynamic counts as static, including one it doesn't list yet.
+  dynamic_parameter_names = toset(data.azapi_resource_list.configurations.output.dynamic)
+  static_parameters = {
+    for name, value in local.written_parameters : name => value
+    if !contains(local.dynamic_parameter_names, name)
+  }
+}
+
+resource "terraform_data" "static_parameters" {
+  input = local.static_parameters
+}
+
+resource "azapi_resource_action" "restart" {
+  type        = "Microsoft.DBforPostgreSQL/flexibleServers@2025-08-01"
+  resource_id = azurerm_postgresql_flexible_server.this.id
+  action      = "restart"
+  method      = "POST"
+
+  depends_on = [terraform_data.server_id, terraform_data.static_parameters]
+
+  # This is what triggers the server restart only if a static parameter has changed
+  lifecycle {
+    replace_triggered_by = [terraform_data.static_parameters]
+  }
+}
+
+# Read after the restart, or after the parameter writes when nothing needed one.
+data "azapi_resource_list" "pending_restart" {
+  type                   = "Microsoft.DBforPostgreSQL/flexibleServers/configurations@2025-08-01"
+  parent_id              = terraform_data.server_id.output
+  response_export_values = { names = "value[?properties.isConfigPendingRestart].name" }
+
+  depends_on = [
+    azurerm_postgresql_flexible_server_configuration.extensions,
+    azurerm_postgresql_flexible_server_configuration.this,
+    azurerm_postgresql_flexible_server_configuration.pgbouncer_enabled,
+    azurerm_postgresql_flexible_server_configuration.pgbouncer,
+    azapi_resource_action.restart,
+  ]
+
+  lifecycle {
+    postcondition {
+      condition     = length(self.output.names) == 0
+      error_message = "${azurerm_postgresql_flexible_server.this.name} still waits for a restart to apply: ${join(", ", self.output.names)}. Restart it, e.g. from the Azure portal."
+    }
+  }
 }
 
 # --- Credentials ----------------------------------------------------------------------------------

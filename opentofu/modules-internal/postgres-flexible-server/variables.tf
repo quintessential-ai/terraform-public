@@ -76,7 +76,7 @@ variable "sku_name" {
 }
 
 variable "zone" {
-  description = "Availability zone of the primary. Azure picks one when unset."
+  description = "Availability zone of the primary, read at creation only. Azure picks one when unset."
   type        = string
   default     = null
 }
@@ -105,7 +105,7 @@ variable "maintenance_window" {
   description = "In UTC; day_of_week 0 is Sunday. Defaults to Sunday 02:00."
   type = object({
     day_of_week  = optional(number, 0)
-    start_hour   = optional(number, 0)
+    start_hour   = optional(number, 2)
     start_minute = optional(number, 0)
   })
   default  = { day_of_week = 0, start_hour = 2, start_minute = 0 }
@@ -113,10 +113,41 @@ variable "maintenance_window" {
 }
 
 variable "server_parameters" {
-  description = "Postgres server parameters, merged over the module's defaults (tuned from the SKU's vCPUs and memory). Values are in each parameter's base unit (pg_settings.unit)."
+  description = "Postgres server parameters, merged over the module's defaults (tuned from the SKU's vCPUs and memory). Values are in each parameter's base unit (pg_settings.unit). A parameter removed from both keeps its last value on the server: set it to its default to revert it."
   type        = map(string)
   default     = {}
   nullable    = false
+
+  # Lowercase, as Azure and the defaults name them: a key in another case would be a second
+  # resource for the same parameter.
+  validation {
+    condition     = alltrue([for name in keys(var.server_parameters) : name == lower(name)])
+    error_message = "Parameter names must be lowercase."
+  }
+
+  validation {
+    condition = alltrue([
+      for name in keys(var.server_parameters) : !startswith(name, "pgbouncer.") && name != "azure.extensions"
+    ])
+    error_message = "pgbouncer.* parameters belong in pgbouncer_parameters, and azure.extensions is set from extensions."
+  }
+}
+
+variable "pgbouncer_parameters" {
+  description = "pgbouncer.* server parameters, merged over the module's defaults: pgbouncer.enabled = true, pgbouncer.max_prepared_statements = 256. The others are dropped while pgbouncer.enabled is false. A parameter removed from both keeps its last value on the server: set it to its default to revert it."
+  type        = map(string)
+  default     = {}
+  nullable    = false
+
+  validation {
+    condition     = alltrue([for name in keys(var.pgbouncer_parameters) : name == lower(name)])
+    error_message = "Parameter names must be lowercase."
+  }
+
+  validation {
+    condition     = alltrue([for name in keys(var.pgbouncer_parameters) : startswith(name, "pgbouncer.")])
+    error_message = "Every key must be a pgbouncer.* parameter, e.g. pgbouncer.default_pool_size."
+  }
 }
 
 variable "extensions" {

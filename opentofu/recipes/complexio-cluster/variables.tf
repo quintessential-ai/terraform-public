@@ -3,7 +3,7 @@ variable "cluster_name" {
   default = "complexio-aks"
 }
 
-variable "default_location" {
+variable "region" {
   type = string
 }
 
@@ -26,7 +26,7 @@ variable "existing_resource_group_name" {
 
 variable "kubernetes_version" {
   type    = string
-  default = null
+  default = "1.36"
 }
 
 variable "managed_cluster_sku_tier" {
@@ -41,12 +41,12 @@ variable "availability_zones" {
 
 variable "core_worker_pool_vm_size" {
   type    = string
-  default = "standard_d4s_v6"
+  default = "Standard_B2s_v2"
 }
 
 variable "core_worker_pool_os_disk_size" {
   type    = number
-  default = 128
+  default = 64
 }
 
 variable "node_provisioning_mode" {
@@ -176,7 +176,7 @@ variable "k8s_namespaces" {
 variable "create_azure_key_vault" {
   description = "Create a Key Vault dedicated to this cluster."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "azure_key_vault_name" {
@@ -191,7 +191,7 @@ variable "azure_key_vault_name" {
 }
 
 variable "existing_azure_key_vault" {
-  description = "Key Vault to grant the cluster's secret operators access to. Optional; resource group and subscription default to the cluster's."
+  description = "Key Vault to grant the cluster's operators access to. Optional; resource group and subscription default to the cluster's."
   type = object({
     name                = string
     resource_group_name = optional(string)
@@ -200,28 +200,140 @@ variable "existing_azure_key_vault" {
   default = null
 }
 
-variable "postgres" {
-  type = object({
-    name                           = optional(string)
-    subnet_cidr                    = optional(string)
-    existing_private_dns_zone_id   = optional(string)
-    postgres_version               = optional(string)
-    sku_name                       = optional(string)
-    zone                           = optional(string)
-    storage                        = object({ size_mb = number, iops = number, throughput_mbps = number })
-    backup_retention_days          = optional(number)
-    maintenance_window             = optional(object({ day_of_week = optional(number, 0), start_hour = optional(number, 0), start_minute = optional(number, 0) }))
-    administrator_login            = optional(string)
-    administrator_password_version = optional(number)
-    server_parameters              = optional(map(string))
-    extensions                     = optional(list(string))
-  })
-  default = null
+variable "key_vault_secrets_officer_groups" {
+  description = "Groups (principal IDs) granted Key Vault Secrets Officer on the created Key Vault. Whoever runs Terraform needs that."
+  type        = list(string)
+  default     = []
 
   validation {
-    condition     = var.postgres == null || var.existing_vnet_name == null || try(var.postgres.subnet_cidr, null) != null
-    error_message = "Set postgres.subnet_cidr explicitly when existing_vnet_name is used."
+    condition = (
+      !var.create_postgres || var.existing_azure_key_vault != null
+      || length(var.key_vault_secrets_officer_groups) + length(var.azure_rbac.cluster_admin_principal_ids) > 0
+    )
+    error_message = "Postgres stores its credentials in the created Key Vault: grant whoever runs Terraform access through key_vault_secrets_officer_groups or azure_rbac.cluster_admin_principal_ids."
   }
+}
+
+# --- PostgreSQL ----------------------------------------------------------------------------------
+
+variable "create_postgres" {
+  description = "Create a private PostgreSQL flexible server in the same VNet."
+  type        = bool
+  default     = true
+
+  validation {
+    condition     = !var.create_postgres || var.create_azure_key_vault || var.existing_azure_key_vault != null
+    error_message = "create_postgres stores the administrator credentials in a Key Vault: set create_azure_key_vault or existing_azure_key_vault."
+  }
+}
+
+variable "postgres_name" {
+  description = "Server names are globally unique (<name>.postgres.database.azure.com), so a custom name is often necessary. Defaults to <cluster_name>-pg-<random_string>."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.postgres_name == null || can(regex("^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$", var.postgres_name))
+    error_message = "The Postgres server name must be 3 to 63 characters of lowercase letters, digits and hyphens, and cannot start or end with a hyphen."
+  }
+}
+
+variable "postgres_subnet_cidr" {
+  description = "Range of the server's delegated subnet, a /28 at least. Defaults to the fourth /24 of vnet_cidr. Required when existing_vnet_name is set."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = !var.create_postgres || var.existing_vnet_name == null || var.postgres_subnet_cidr != null
+    error_message = "Set postgres_subnet_cidr explicitly when existing_vnet_name is used."
+  }
+}
+
+variable "postgres_existing_private_dns_zone_id" {
+  description = "An existing privatelink.postgres.database.azure.com zone already linked to the cluster's VNet. Created when unset."
+  type        = string
+  default     = null
+}
+
+variable "postgres_version" {
+  description = "Postgres major version."
+  type        = string
+  default     = "18"
+}
+
+variable "postgres_sku_name" {
+  description = "Compute SKU, prefixed with its tier: MO_ (memory optimized), GP_ (general purpose) or B_ (burstable). Use MO_Standard_E16ds_v5 where v6 is not available in the region."
+  type        = string
+  default     = "MO_Standard_E16ds_v5"
+}
+
+variable "postgres_zone" {
+  description = "Availability zone of the server, read at creation only. Azure picks one when unset."
+  type        = string
+  default     = null
+}
+
+variable "postgres_storage_size_mb" {
+  description = "Premium SSD v2 disk size in MB. 2097152 = 2 TB."
+  type        = number
+  default     = 2097152
+}
+
+variable "postgres_storage_iops" {
+  description = "Provisioned disk IOPS."
+  type        = number
+  default     = 12000
+}
+
+variable "postgres_storage_throughput_mbps" {
+  description = "Provisioned disk throughput in MB/s."
+  type        = number
+  default     = 1000
+}
+
+variable "postgres_backup_retention_days" {
+  description = "Days of backups kept, between 7 and 35."
+  type        = number
+  default     = 14
+}
+
+variable "postgres_maintenance_window" {
+  description = "Weekly maintenance window in UTC; day_of_week 0 is Sunday."
+  type = object({
+    day_of_week  = optional(number, 0)
+    start_hour   = optional(number, 2)
+    start_minute = optional(number, 0)
+  })
+  default = { day_of_week = 0, start_hour = 2, start_minute = 0 }
+}
+
+variable "postgres_administrator_login" {
+  type    = string
+  default = "complexio"
+}
+
+variable "postgres_administrator_password_version" {
+  description = "Increasing it rotates the administrator password: Terraform sends the current postgres_administrator_password, or a newly generated one, to the server and the Key Vault again. Always consult Complexio before changing it."
+  type        = number
+  default     = 1
+}
+
+variable "postgres_server_parameters" {
+  description = "Postgres server parameters, merged over the module's defaults (tuned from the SKU's vCPUs and memory). Values are in each parameter's base unit (pg_settings.unit), e.g. ms for idle_in_transaction_session_timeout. A parameter removed from both keeps its last value on the server: set it to its default to revert it."
+  type        = map(string)
+  default     = {}
+}
+
+variable "postgres_pgbouncer_parameters" {
+  description = "pgbouncer.* server parameters, merged over the module's defaults: pgbouncer.enabled = true, pgbouncer.max_prepared_statements = 256. The others are dropped while pgbouncer.enabled is false. A parameter removed from both keeps its last value on the server: set it to its default to revert it."
+  type        = map(string)
+  default     = {}
+}
+
+variable "postgres_extensions" {
+  description = "Extensions allowed on the server (azure.extensions). Null keeps the module's list: vector, pg_stat_statements, pg_trgm, pgstattuple, uuid-ossp and btree_gin."
+  type        = list(string)
+  default     = null
 }
 
 variable "postgres_administrator_password" {

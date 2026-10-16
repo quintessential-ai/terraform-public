@@ -13,10 +13,21 @@ You can consume our code through Terragrunt (recommended) or as a module in your
 - `Owner` (or `Contributor` plus `Role Based Access Control Administrator`) access in the target Azure subscription, since it creates managed identities and role assignments. See the [last section](#which-kind-of-infrastructure-does-it-provision).
 - A blob container in a Storage Account where Terragrunt/Terraform can store the state file. See [azurerm remote backend](https://developer.hashicorp.com/terraform/language/backend/azurerm).
 - `Storage Blob Data Contributor` on the Storage Account where the state is stored.
+- Membership in one of the groups in `key_vault_secrets_officer_groups` (or `azure_rbac.cluster_admin_principal_ids`), since Terraform reads and writes secrets in the Key Vault it creates. If you were just added to the group, sign in again (`az login`) so your token includes it; until then, Terraform fails with a 403 on the Key Vault.
+- Terraform 1.16.0 or later, or OpenTofu 1.12.0 or later.
+- The Azure CLI (`az`), signed in, on the machine that runs Terraform.
 
 ### Consuming it via Terragrunt (golden path)
 
-A "recipe" is a root module that includes its own provider configuration. [Terragrunt](https://terragrunt.com/), a tool that orchestrates and runs Terraform code, is the simplest way to run one.
+A "recipe" is a root module that includes its own provider configuration. [Terragrunt](https://terragrunt.com/), a tool that orchestrates and runs Terraform code, is the simplest way to run one. To install it:
+
+```sh
+curl -sSfL --proto '=https' --tlsv1.2 https://terragrunt.com/install | bash
+# Use ~/.zshrc instead if your shell is zsh, the default on macOS.
+echo 'export PATH="$HOME/.terragrunt/bin:$PATH"' >> ~/.bashrc
+```
+
+On macOS, `brew install terragrunt` works too.
 
 Because the recipe already configures the providers, you only need to define the remote state backend and the recipe's inputs.
 
@@ -26,7 +37,7 @@ Because the recipe already configures the providers, you only need to define the
 terraform_binary = "terraform"
 
 terraform {
-    source = "git::git@github.com:quintessential-ai/terraform-public.git//terraform/recipes/managed-aks"
+    source = "git::git@github.com:quintessential-ai/terraform-public.git//terraform/recipes/complexio-cluster"
 }
 
 # Example of remote state stored in Azure Blob Storage
@@ -45,10 +56,23 @@ remote_state {
 }
 
 inputs = {
-    subscription_id     = "<subscription_id>"
-    resource_group_name = "<resource-group-name>"
-    default_location    = "westeurope"
-    kubernetes_version  = "1.36"
+    # Required
+    #
+    subscription_id                  = "<subscription-id>"
+    resource_group_name              = "<resource-group-name>"
+    region                           = "<region>"
+    # The groups that get the "Key Vault Secrets Officer" role in the Key Vault. Whoever runs
+    # Terraform needs to be in one of these groups, since the Terraform code writes some secrets in
+    # Key Vault. Only optional when they are in azure_rbac.cluster_admin_principal_ids instead.
+    key_vault_secrets_officer_groups = ["<group-id>", ...]
+
+    # Optional, but highly recommended
+    #
+    # Creates the child zone "<prefix>.<parent-zone-name>", e.g. "acme.example.com".
+    dns_zone = {
+        prefix           = "<prefix>"
+        parent_zone_name = "<parent-zone-name>"
+    }
     [...]
 }
 ```
@@ -67,40 +91,56 @@ If you don't want to use Terragrunt, or you already have an existing Terraform c
 
 ```hcl
 module "complexio_infra" {
-    source = "git::git@github.com:quintessential-ai/terraform-public.git//terraform/modules-public/managed-aks"
+    source = "git::git@github.com:quintessential-ai/terraform-public.git//terraform/modules-public/complexio-cluster"
     providers = {
         azurerm            = azurerm
         azurerm.parent_dns = azurerm.parent_dns
+        azapi              = azapi
     }
 
     # Input parameters
-    resource_group_name = "<resource-group-name>"
-    default_location    = "<location>"
-    kubernetes_version  = "<k8s-version>"
-    [...]
+    #
+    # The same as the input parameters for the Terragrunt example, but without the `subscription_id`.
+    # The subscription is already embedded into the providers that you define below.
 }
 
-# + backend configuration.
+# Example of remote state stored in Azure Blob Storage
+terraform {
+    backend "azurerm" {
+        storage_account_name = "<storage-account>"
+        container_name       = "<container-name>"
+        key                  = "<state-name>.tfstate"
+        use_azuread_auth     = true
+    }
+}
 
-# + variable definition, if you don't want to hardcode values in the input parameters for "complexio_infra".
-
-# + provider definitions: the module needs two azurerm providers. The default one points at the
-# cluster's subscription; the one aliased "parent_dns" points at the subscription of the parent
-# DNS zone, which can be the same subscription.
+# + provider definitions: the module needs two azurerm providers and one azapi provider. The default
+# azurerm and the azapi providers point at the cluster's subscription; the "parent_dns" points at
+# the subscription of the parent DNS zone, which can be the same subscription.
 #
 # provider "azurerm" {
-#     subscription_id = "<subscription_id>"
-#     features {}
+#     subscription_id = "<subscription-id>"
+#     features {
+#         postgresql_flexible_server {
+#             restart_server_on_configuration_value_change = false
+#         }
+#     }
+# }
+#
+# provider "azapi" {
+#     subscription_id = "<subscription-id>"
 # }
 #
 # provider "azurerm" {
 #     alias           = "parent_dns"
-#     subscription_id = "<parent-dns-zone-subscription_id>"
+#     subscription_id = "<parent-dns-zone-subscription-id>"
 #     features {}
 # }
+
+# + variable definition, if you don't want to hardcode values in the input parameters for "complexio_infra".
 ```
 
-Note that this example uses `terraform/modules-public/managed-aks` instead of `terraform/recipes/managed-aks`. The code is almost the same in both, except that `modules-public` has no `provider` blocks, so it can be used as a regular module.
+Note that this example uses `terraform/modules-public/complexio-cluster` instead of `terraform/recipes/complexio-cluster`. The code is almost the same in both, except that `modules-public` has no `provider` blocks, so it can be used as a regular module.
 
 ## What to avoid
 
@@ -110,13 +150,13 @@ Note that this example uses `terraform/modules-public/managed-aks` instead of `t
 
 ## Which kind of infrastructure does it provision?
 
-### `recipes/managed-aks`
+### `recipes/complexio-cluster`
 
-- VNet, subnets and potential VNet peering.
+- VNet, subnets and (optional) VNet peering.
 - AKS cluster with Karpenter and OIDC + Workload Identity enabled. The API server is private by default (API Server VNet Integration): it has no public endpoint.
+- Private Azure Database for PostgreSQL flexible server in the cluster's VNet.
+- Azure Key Vault.
 - Workload identities for ExternalSecrets, ExternalDNS, CertManager and InferenceWorker.
 - A static public IP for the gateway's LoadBalancer Service (on by default).
 - (Optional) Azure Bastion (`create_bastion`) to reach the private API server.
-- (Optional) Azure Key Vault (`create_azure_key_vault`).
 - (Optional) Child DNS zone (`dns_zone`).
-- (Optional) Private Azure Database for PostgreSQL flexible server in the cluster's VNet (`postgres`).

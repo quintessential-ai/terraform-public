@@ -64,22 +64,24 @@ resource "azurerm_kubernetes_cluster" "this" {
 
   default_node_pool {
     name = "core"
+    # Needed if vm_size, os_disk_size_gb, etc. change, to allow a smooth rotation of the node pool.
+    temporary_name_for_rotation = "coretmp"
     # Without an availability zone the core nodes land in a physical zone we cannot see — their
     # topology.kubernetes.io/zone reads "0" — which makes any PVC bound there regional. Karpenter
     # then cannot provision a node to attach it to, since the nodes it creates are always zonal.
-    zones                  = var.availability_zones
-    vm_size                = var.core_pool_vm_size
-    node_count             = var.core_pool_node_count
-    auto_scaling_enabled   = false
-    fips_enabled           = false
-    node_public_ip_enabled = false
-    kubelet_disk_type      = "OS"
-    max_pods               = 110
-    type                   = "VirtualMachineScaleSets"
-    orchestrator_version   = var.kubernetes_version
-    os_disk_size_gb        = var.core_pool_os_disk_size_gb
-    os_disk_type           = "Managed"
-    scale_down_mode        = "Delete"
+    zones                        = var.availability_zones
+    vm_size                      = var.core_pool_vm_size
+    node_count                   = var.core_pool_node_count
+    auto_scaling_enabled         = false
+    fips_enabled                 = false
+    node_public_ip_enabled       = false
+    kubelet_disk_type            = "OS"
+    max_pods                     = 110
+    type                         = "VirtualMachineScaleSets"
+    orchestrator_version         = var.kubernetes_version
+    os_disk_size_gb              = var.core_pool_os_disk_size_gb
+    os_disk_type                 = "Managed"
+    scale_down_mode              = "Delete"
     # Also the subnet Karpenter provisions into by default.
     # https://learn.microsoft.com/en-us/azure/aks/node-autoprovision-networking#default-subnet-behavior
     vnet_subnet_id = var.nodes_subnet_id
@@ -174,21 +176,17 @@ resource "azurerm_role_assignment" "gateway_public_ip" {
 
 # --- Azure Container Storage --------------------------------------------------------------------
 
-# Azure Container Storage has no azurerm resource: the CLI does node labelling and storage-pool
-# setup on top of installing the cluster extension.
-# https://learn.microsoft.com/en-us/azure/storage/container-storage/use-container-storage-with-local-disk
-resource "terraform_data" "azure_container_storage" {
-  count            = var.enable_azure_container_storage ? 1 : 0
-  triggers_replace = [azurerm_kubernetes_cluster.this.id, var.azure_container_storage_pool_type]
+# See https://learn.microsoft.com/en-us/azure/storage/container-storage/container-storage-introduction
+resource "azurerm_kubernetes_cluster_extension" "azure_container_storage" {
+  count             = var.enable_azure_container_storage ? 1 : 0
+  name              = "acstor"
+  cluster_id        = azurerm_kubernetes_cluster.this.id
+  extension_type    = "microsoft.azurecontainerstoragev2"
+  release_train     = "stable"
+  release_namespace = "kube-system"
 
-  provisioner "local-exec" {
-    command = join(" ", [
-      "az aks update",
-      "--subscription ${split("/", azurerm_kubernetes_cluster.this.id)[2]}",
-      "--resource-group ${var.resource_group_name}",
-      "--name ${azurerm_kubernetes_cluster.this.name}",
-      "--enable-azure-container-storage ${var.azure_container_storage_pool_type}",
-    ])
+  configuration_settings = {
+    "csiDriverConfigs.local-csi-driver.enabled" = "True"
   }
 }
 
