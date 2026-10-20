@@ -160,3 +160,12 @@ Note that this example uses `terraform/modules-public/complexio-cluster` instead
 - A static public IP for the gateway's LoadBalancer Service (on by default).
 - (Optional) Azure Bastion (`create_bastion`) to reach the private API server.
 - (Optional) Child DNS zone (`dns_zone`).
+
+### `recipes/entra-app-registrations`
+
+Applied by a directory administrator rather than a subscription owner. Its [README](recipes/entra-app-registrations/README.public.md) has the roles it needs, every switch, and the steps after apply.
+
+- The Complexio - SSO and Complexio - Backend app registrations and enterprise applications in your Microsoft Entra tenant, with admin consent for the Microsoft Graph permissions of the features you switch on (`features`).
+- Their certificates, client secrets and IDs, written to your Key Vault.
+- (Optional) Complexio's standard access groups, assigned to Complexio - SSO (`create_and_assign_access_groups`).
+- The Complexio mailboxes administrative unit, and, with email features, the Exchange Online PowerShell that limits Complexio's mailbox access to its members.
