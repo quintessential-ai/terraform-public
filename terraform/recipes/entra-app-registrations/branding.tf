@@ -5,5 +5,5 @@ locals {
 
   sso_description     = "Sign-in for Complexio: Stevie, Settings and Enterprise Automator."
   backend_description = "Lets Complexio's services reach Microsoft 365 on your organization's behalf."
-  backend_notes       = "Mailbox access is granted in Exchange Online, limited to the members of the Complexio mailboxes administrative unit. Don't add mail permissions to this application: Exchange adds the two grants together, so every mailbox in the tenant would become reachable."
+  backend_notes       = "Mailbox access is granted in Exchange Online, limited to the members of the Complexio mailboxes administrative unit. Don't add application mail permissions to this application: Exchange adds the two grants together, so every mailbox in the tenant would become reachable."
 }

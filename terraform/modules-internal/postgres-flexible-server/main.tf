@@ -1,10 +1,4 @@
-data "azurerm_resource_group" "this" {
-  count = var.location == null ? 1 : 0
-  name  = var.resource_group_name
-}
-
 locals {
-  location        = coalesce(var.location, one(data.azurerm_resource_group.this[*].location))
   create_subnet   = var.existing_subnet_id == null
   create_dns_zone = var.existing_private_dns_zone_id == null
 }
@@ -54,7 +48,7 @@ resource "azurerm_private_dns_zone_virtual_network_link" "this" {
 resource "azurerm_postgresql_flexible_server" "this" {
   name                = var.name
   resource_group_name = var.resource_group_name
-  location            = local.location
+  location            = var.region
   version             = var.postgres_version
   sku_name            = var.sku_name
   zone                = var.zone
@@ -86,7 +80,7 @@ resource "azurerm_postgresql_flexible_server" "this" {
   tags = var.tags
 
   lifecycle {
-    prevent_destroy = true
+    # prevent_destroy = true
     # When zone is unset, Azure picks one and the next plan would set it back to null, which Azure
     # rejects: a server only changes zone by failing over to its standby.
     ignore_changes = [zone]
@@ -291,7 +285,8 @@ resource "azapi_resource_action" "restart" {
   }
 }
 
-# Read after the restart, or after the parameter writes when nothing needed one.
+# It exists for its postcondition, which fails if a restart is pending.
+# tflint-ignore: terraform_unused_declarations
 data "azapi_resource_list" "pending_restart" {
   type                   = "Microsoft.DBforPostgreSQL/flexibleServers/configurations@2025-08-01"
   parent_id              = terraform_data.server_id.output

@@ -2,14 +2,7 @@
 
 data "azurerm_client_config" "current" {}
 
-# Only read when the caller leaves location unset.
-data "azurerm_resource_group" "this" {
-  count = var.location == null ? 1 : 0
-  name  = var.resource_group_name
-}
-
 locals {
-  location   = coalesce(var.location, one(data.azurerm_resource_group.this[*].location))
   dns_prefix = coalesce(var.dns_prefix, var.resource_group_name)
   tenant_id  = coalesce(var.tenant_id, data.azurerm_client_config.current.tenant_id)
 }
@@ -21,7 +14,7 @@ locals {
 resource "azurerm_user_assigned_identity" "cluster" {
   name                = "${var.cluster_name}-identity"
   resource_group_name = var.resource_group_name
-  location            = local.location
+  location            = var.region
   tags                = var.tags
 }
 
@@ -33,12 +26,30 @@ resource "azurerm_role_assignment" "network_contributor" {
   scope                = var.vnet_id
 }
 
+# AKS checks the route table's default route when it creates the cluster.
+resource "azurerm_role_assignment" "route_table" {
+  count                = var.outbound_type == "userDefinedRouting" ? 1 : 0
+  principal_id         = azurerm_user_assigned_identity.cluster.principal_id
+  principal_type       = "ServicePrincipal"
+  role_definition_name = "Network Contributor"
+  scope                = var.route_table_id
+}
+
+# AKS checks the NAT gateway when it creates the cluster.
+resource "azurerm_role_assignment" "nat_gateway" {
+  count                = var.outbound_type == "userAssignedNATGateway" ? 1 : 0
+  principal_id         = azurerm_user_assigned_identity.cluster.principal_id
+  principal_type       = "ServicePrincipal"
+  role_definition_name = "Network Contributor"
+  scope                = var.nat_gateway_id
+}
+
 # --- Cluster ------------------------------------------------------------------------------------
 
 resource "azurerm_kubernetes_cluster" "this" {
   name                = var.cluster_name
   resource_group_name = var.resource_group_name
-  location            = local.location
+  location            = var.region
   dns_prefix          = local.dns_prefix
   kubernetes_version  = var.kubernetes_version
   sku_tier            = var.sku_tier
@@ -69,19 +80,19 @@ resource "azurerm_kubernetes_cluster" "this" {
     # Without an availability zone the core nodes land in a physical zone we cannot see — their
     # topology.kubernetes.io/zone reads "0" — which makes any PVC bound there regional. Karpenter
     # then cannot provision a node to attach it to, since the nodes it creates are always zonal.
-    zones                        = var.availability_zones
-    vm_size                      = var.core_pool_vm_size
-    node_count                   = var.core_pool_node_count
-    auto_scaling_enabled         = false
-    fips_enabled                 = false
-    node_public_ip_enabled       = false
-    kubelet_disk_type            = "OS"
-    max_pods                     = 110
-    type                         = "VirtualMachineScaleSets"
-    orchestrator_version         = var.kubernetes_version
-    os_disk_size_gb              = var.core_pool_os_disk_size_gb
-    os_disk_type                 = "Managed"
-    scale_down_mode              = "Delete"
+    zones                  = var.availability_zones
+    vm_size                = var.core_pool_vm_size
+    node_count             = var.core_pool_node_count
+    auto_scaling_enabled   = false
+    fips_enabled           = false
+    node_public_ip_enabled = false
+    kubelet_disk_type      = "OS"
+    max_pods               = 110
+    type                   = "VirtualMachineScaleSets"
+    orchestrator_version   = var.kubernetes_version
+    os_disk_size_gb        = var.core_pool_os_disk_size_gb
+    os_disk_type           = "Managed"
+    scale_down_mode        = "Delete"
     # Also the subnet Karpenter provisions into by default.
     # https://learn.microsoft.com/en-us/azure/aks/node-autoprovision-networking#default-subnet-behavior
     vnet_subnet_id = var.nodes_subnet_id
@@ -119,14 +130,22 @@ resource "azurerm_kubernetes_cluster" "this" {
     network_data_plane = "cilium"
     network_policy     = "cilium"
     load_balancer_sku  = "standard"
-    pod_cidr           = var.pod_cidr
-    service_cidr       = var.service_cidr
-    dns_service_ip     = var.dns_service_ip
+    # Egress leaves through the NAT gateway on the nodes subnet, or follows its route table to a
+    # network appliance. AKS creates no outbound public IP, and can switch between the two in place.
+    # https://learn.microsoft.com/en-us/azure/aks/egress-outboundtype
+    outbound_type  = var.outbound_type
+    pod_cidr       = var.pod_cidr
+    service_cidr   = var.service_cidr
+    dns_service_ip = var.dns_service_ip
   }
 
   tags = var.tags
 
-  depends_on = [azurerm_role_assignment.network_contributor]
+  depends_on = [
+    azurerm_role_assignment.network_contributor,
+    azurerm_role_assignment.route_table,
+    azurerm_role_assignment.nat_gateway,
+  ]
 }
 
 # --- Kubelet identity grants --------------------------------------------------------------------
@@ -152,7 +171,7 @@ resource "azurerm_public_ip" "gateway" {
   count               = var.create_gateway_public_ip ? 1 : 0
   name                = "${var.cluster_name}-gateway"
   resource_group_name = var.resource_group_name
-  location            = local.location
+  location            = var.region
   sku                 = "Standard"
   allocation_method   = "Static"
   zones               = var.availability_zones

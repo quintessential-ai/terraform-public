@@ -7,10 +7,9 @@ variable "resource_group_name" {
   type = string
 }
 
-variable "location" {
-  description = "Defaults to the resource group's location."
+variable "region" {
+  description = "Region of the VNet and the egress route table."
   type        = string
-  default     = null
 }
 
 variable "vnet_cidr" {
@@ -80,10 +79,49 @@ variable "bastion_subnet_cidr" {
   }
 }
 
+variable "ingress_lb_subnet_cidr" {
+  description = "Range of the aks-ingress-lb subnet, created with route_egress_to_network_appliance. Defaults to the sixth block of vnet_cidr, sized by subnet_newbits. Required when attaching to an existing VNet."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.existing_vnet_name == null || !var.route_egress_to_network_appliance || var.ingress_lb_subnet_cidr != null
+    error_message = "Set ingress_lb_subnet_cidr explicitly when existing_vnet_name is used."
+  }
+}
+
 variable "subnet_newbits" {
   description = "Bits added to the VNet prefix to size the derived subnet: 8 turns a /16 into a /24."
   type        = number
   default     = 8
+}
+
+variable "route_egress_to_network_appliance" {
+  description = "Route all egress from the nodes subnet to network_appliance_ip. Otherwise it leaves through a NAT gateway this module creates."
+  type        = bool
+  default     = false
+}
+
+variable "network_appliance_ip" {
+  description = "Private IP of the network appliance that takes the nodes' egress. Required with route_egress_to_network_appliance."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = !var.route_egress_to_network_appliance || var.network_appliance_ip != null
+    error_message = "Set network_appliance_ip when route_egress_to_network_appliance is true."
+  }
+}
+
+variable "network_appliance_vnet_id" {
+  description = "VNet holding network_appliance_ip, when it is not this one. Peered both ways with this VNet; its side is created with the azurerm.network_appliance provider."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.network_appliance_vnet_id == null || can(regex("^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft.Network/virtualNetworks/[^/]+$", var.network_appliance_vnet_id))
+    error_message = "network_appliance_vnet_id must be a full VNet resource ID."
+  }
 }
 
 variable "peerings" {

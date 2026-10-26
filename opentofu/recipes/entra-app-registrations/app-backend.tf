@@ -2,8 +2,8 @@
 resource "random_uuid" "backend_access_as_user" {}
 
 # The registration Complexio's services use to reach Microsoft 365, with the application
-# permissions of the features you switch on, and the delegated ones for drafting and sending mail
-# from Stevie. It exposes one scope, access_as_user, which
+# permissions of the features you switch on, and the delegated ones Stevie uses as the signed-in
+# user, mail drafting and sending included. It exposes one scope, access_as_user, which
 # Complexio - SSO asks for to reach Microsoft 365 as the signed-in user. Admins and users may
 # consent to it, but nobody is asked: Complexio - SSO is pre-authorized for it, and consented for
 # everyone in sso.tf.

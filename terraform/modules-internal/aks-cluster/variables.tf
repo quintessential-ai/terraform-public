@@ -2,10 +2,9 @@ variable "cluster_name" {
   type = string
 }
 
-variable "location" {
-  description = "Defaults to the resource group's location."
+variable "region" {
+  description = "Region of the cluster. Must match the VNet's."
   type        = string
-  default     = null
 }
 
 variable "resource_group_name" {
@@ -51,6 +50,38 @@ variable "vnet_id" {
   type        = string
 }
 
+variable "outbound_type" {
+  description = "userAssignedNATGateway: egress leaves through nat_gateway_id. userDefinedRouting: egress follows route_table_id to a network appliance."
+  type        = string
+
+  validation {
+    condition     = contains(["userAssignedNATGateway", "userDefinedRouting"], var.outbound_type)
+    error_message = "outbound_type must be userAssignedNATGateway or userDefinedRouting."
+  }
+}
+
+variable "nat_gateway_id" {
+  description = "NAT gateway on nodes_subnet_id. Required with userAssignedNATGateway."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.outbound_type != "userAssignedNATGateway" || var.nat_gateway_id != null
+    error_message = "Set nat_gateway_id when outbound_type is userAssignedNATGateway."
+  }
+}
+
+variable "route_table_id" {
+  description = "Route table on nodes_subnet_id that sends egress to a network appliance. Required with userDefinedRouting."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.outbound_type != "userDefinedRouting" || var.route_table_id != null
+    error_message = "Set route_table_id when outbound_type is userDefinedRouting."
+  }
+}
+
 # --- Cluster networking ---------------------------------------------------------------------------
 # Overlay ranges, internal to the cluster. They do not consume VNet address space.
 
@@ -80,7 +111,6 @@ variable "availability_zones" {
 variable "core_pool_vm_size" {
   description = "Older or very new VM types are not available in every zone, which fails cluster creation."
   type        = string
-  default     = "standard_d4s_v6"
 }
 
 variable "core_pool_node_count" {

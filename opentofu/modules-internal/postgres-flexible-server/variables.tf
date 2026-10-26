@@ -7,10 +7,9 @@ variable "resource_group_name" {
   type = string
 }
 
-variable "location" {
-  description = "Defaults to the resource group's location. Must match the VNet's."
+variable "region" {
+  description = "Region of the server. Must match the VNet's."
   type        = string
-  default     = null
 }
 
 # --- Networking -----------------------------------------------------------------------------------
@@ -71,7 +70,7 @@ variable "postgres_version" {
 variable "sku_name" {
   description = "Prefixed with the tier: MO_ (memory optimized), GP_ (general purpose) or B_ (burstable)."
   type        = string
-  default     = "MO_Standard_E16ds_v6"
+  default     = "MO_Standard_E16ds_v5"
   nullable    = false
 }
 

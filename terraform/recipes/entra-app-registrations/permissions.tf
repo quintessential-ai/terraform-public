@@ -9,9 +9,11 @@
 # instead, so Microsoft Graph lets Complexio read every team's channels; chats aren't included.
 #
 # Delegated permissions are used as the signed-in user, never reaching further than what that
-# user can already see. Stevie's are granted to Complexio - SSO. Complexio - Backend gets only
-# those for drafting and sending mail as the user from Stevie: every Microsoft Graph token it gets
-# for a user carries all of its delegated permissions, and its mail drafting accepts no others.
+# user can already see. Stevie's are granted to both Complexio - SSO and Complexio - Backend, and
+# Complexio - Backend also gets those for drafting and sending mail as the user from Stevie. It
+# holds Mail.Send only with stevie_mail_sending_delegated, even when stevie_mail_delegated is on:
+# every Microsoft Graph token it gets for a user carries all of its delegated permissions, so
+# Mail.Send there is what lets Stevie send the drafts it writes.
 #
 # Every sign-in also needs openid, profile, email and offline_access to identify the user and keep
 # them signed in, and User.Read to read their profile.
@@ -49,7 +51,7 @@ locals {
     }
   }
 
-  sso_delegated_permissions_by_feature = {
+  sso_and_backend_delegated_permissions_by_feature = {
     stevie_mail_delegated = {
       "Mail.Read" = "Read the user's mail folders, messages and attachments (GET /me/mailFolders, GET /me/messages)."
       "Mail.Send" = "Send mail, and send drafts, as the user (POST /me/sendMail, POST /me/messages/{id}/send)."
@@ -80,7 +82,7 @@ locals {
     }
   }
 
-  backend_delegated_permissions_by_feature = {
+  backend_only_delegated_permissions_by_feature = {
     stevie_mail_drafting_delegated = {
       "Mail.ReadWrite" = "Create reply and forward drafts, and edit them, as the user (POST /me/messages/{id}/createReply, PATCH /me/messages/{id})."
     }
@@ -93,10 +95,10 @@ locals {
     for feature, permissions in local.application_permissions_by_feature : keys(permissions) if var.features[feature]
   ]))
   sso_delegated_permissions = toset(flatten([
-    for feature, permissions in local.sso_delegated_permissions_by_feature : keys(permissions) if var.features[feature]
+    for feature, permissions in local.sso_and_backend_delegated_permissions_by_feature : keys(permissions) if var.features[feature]
   ]))
-  backend_delegated_permissions = toset(flatten([
-    for feature, permissions in local.backend_delegated_permissions_by_feature : keys(permissions) if var.features[feature]
+  backend_delegated_permissions = setunion(setsubtract(local.sso_delegated_permissions, ["Mail.Send"]), flatten([
+    for feature, permissions in local.backend_only_delegated_permissions_by_feature : keys(permissions) if var.features[feature]
   ]))
   sign_in_permissions = toset(["openid", "profile", "email", "offline_access", "User.Read"])
 

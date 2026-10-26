@@ -7,10 +7,9 @@ variable "resource_group_name" {
   type = string
 }
 
-variable "location" {
-  description = "Defaults to the resource group's location."
+variable "region" {
+  description = "Region of the identity."
   type        = string
-  default     = null
 }
 
 variable "oidc_issuer_url" {

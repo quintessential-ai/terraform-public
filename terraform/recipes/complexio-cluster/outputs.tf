@@ -43,6 +43,16 @@ output "nodes_subnet_cidr" {
   value = module.network.nodes_subnet_cidr
 }
 
+# Without an existing network appliance: the NAT gateway's IP, the source of all egress.
+output "egress_public_ip_address" {
+  value = module.network.egress_public_ip_address
+}
+
+# Behind an existing network appliance: the target of its DNAT rule, and the gateway Service's IP.
+output "ingress_lb_private_ip" {
+  value = local.ingress_lb_private_ip
+}
+
 # For the gateway's GatewayParameters: service.beta.kubernetes.io/azure-pip-name and
 # service.beta.kubernetes.io/azure-load-balancer-resource-group.
 
@@ -54,8 +64,13 @@ output "gateway_public_ip_address" {
   value = module.cluster.gateway_public_ip_address
 }
 
-output "key_vault_ids" {
-  value = local.key_vault_ids
+# The vault the Postgres and the Entra app registrations' credentials are written to.
+output "key_vault_id" {
+  value = azurerm_key_vault.this.id
+}
+
+output "key_vault_name" {
+  value = azurerm_key_vault.this.name
 }
 
 # Client IDs for the azure.workload.identity/client-id ServiceAccount annotations.
@@ -77,8 +92,21 @@ output "cert_manager_identity_client_id" {
   value = try(module.workload_identity["cert-manager"].client_id, null)
 }
 
+output "s3proxy_identity_client_id" {
+  value = try(module.workload_identity["s3proxy"].client_id, null)
+}
+
 output "postgres_fqdn" {
   value = try(module.postgres[0].fqdn, null)
+}
+
+# For the s3proxy chart's backend.azureBlobStorage.accountName.
+output "blob_storage_account_name" {
+  value = try(module.blob_storage[0].name, null)
+}
+
+output "blob_storage_container_names" {
+  value = try(module.blob_storage[0].container_names, null)
 }
 
 output "child_dns_zone_name" {

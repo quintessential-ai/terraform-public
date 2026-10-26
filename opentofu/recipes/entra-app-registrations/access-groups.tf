@@ -1,5 +1,5 @@
 # Complexio's standard access groups, and one Stevie group per department, named
-# <access_group_name_prefix>-<name>. Created only with var.create_and_assign_access_groups.
+# <access_group_name_prefix>-<name>. Created unless var.create_and_assign_access_groups is false.
 locals {
   standard_access_groups = {
     "owners"                      = "Full configuration rights in Complexio Settings. Keep membership to a few administrators."

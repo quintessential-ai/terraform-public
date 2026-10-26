@@ -96,6 +96,17 @@ variable "bastion_subnet_cidr" {
   default     = null
 }
 
+variable "ingress_lb_subnet_cidr" {
+  description = "Subnet for the gateway's private load balancer behind an existing network appliance. Defaults to the sixth /24 of vnet_cidr. Required when existing_vnet_name and use_existing_network_appliance are set."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.ingress_lb_subnet_cidr == null || var.use_existing_network_appliance
+    error_message = "ingress_lb_subnet_cidr is only used with use_existing_network_appliance: without it the gateway has a public IP."
+  }
+}
+
 variable "vnet_peerings" {
   description = "VNets to peer the cluster's VNet with, keyed by a name stable at plan time."
   type = map(object({
@@ -122,9 +133,37 @@ variable "create_bastion" {
 }
 
 variable "create_gateway_public_ip" {
-  description = "Create a static public IP for the gateway's LoadBalancer Service, kept when the Gateway or the cluster is deleted. Set false when the gateway needs no public access."
+  description = "Create a static public IP for the gateway's LoadBalancer Service, kept when the Gateway or the cluster is deleted. Set false when the gateway needs no public access. Ignored with use_existing_network_appliance."
   type        = bool
   default     = true
+}
+
+variable "use_existing_network_appliance" {
+  description = "Send all traffic in and out of the cluster through an existing network appliance: a firewall, or any other appliance the customer uses to manage inbound and outbound traffic, such as one in a hub reached over a VNet peering. Otherwise egress leaves through a NAT gateway. All egress goes to the appliance's private IP, and the gateway has no public IP: it gets a private IP that the appliance forwards HTTPS to. The appliance's owner keeps its egress allow-list. Decide before the cluster is created."
+  type        = bool
+  default     = false
+}
+
+variable "existing_network_appliance_private_ip" {
+  description = "Private IP of the existing network appliance, the next hop for all egress. Required with use_existing_network_appliance."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = !var.use_existing_network_appliance || can(cidrhost("${var.existing_network_appliance_private_ip}/32", 0))
+    error_message = "Set existing_network_appliance_private_ip to an IPv4 address when use_existing_network_appliance is true."
+  }
+}
+
+variable "existing_network_appliance_vnet_id" {
+  description = "Resource ID of the VNet holding the existing network appliance. Terraform peers it with the cluster's VNet both ways. Set existing_network_appliance_subscription_id when it is in another subscription. Required with use_existing_network_appliance."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = !var.use_existing_network_appliance || var.existing_network_appliance_vnet_id != null
+    error_message = "Set existing_network_appliance_vnet_id when use_existing_network_appliance is true."
+  }
 }
 
 # --- Access -------------------------------------------------------------------------------------
@@ -173,12 +212,6 @@ variable "k8s_namespaces" {
 
 # --- Key Vault ----------------------------------------------------------------------------------
 
-variable "create_azure_key_vault" {
-  description = "Create a Key Vault dedicated to this cluster."
-  type        = bool
-  default     = true
-}
-
 variable "azure_key_vault_name" {
   description = "Key Vault names are globally unique, so a custom name is often necessary. Defaults to <cluster_name>-<random_string>."
   type        = string
@@ -190,27 +223,17 @@ variable "azure_key_vault_name" {
   }
 }
 
-variable "existing_azure_key_vault" {
-  description = "Key Vault to grant the cluster's operators access to. Optional; resource group and subscription default to the cluster's."
-  type = object({
-    name                = string
-    resource_group_name = optional(string)
-    subscription_id     = optional(string)
-  })
-  default = null
-}
-
 variable "key_vault_secrets_officer_groups" {
-  description = "Groups (principal IDs) granted Key Vault Secrets Officer on the created Key Vault. Whoever runs Terraform needs that."
+  description = "Principal IDs granted Key Vault Secrets Officer and Key Vault Certificates Officer on the Key Vault. Whoever runs this recipe or entra-app-registrations needs them."
   type        = list(string)
   default     = []
 
   validation {
     condition = (
-      !var.create_postgres || var.existing_azure_key_vault != null
+      !var.create_postgres
       || length(var.key_vault_secrets_officer_groups) + length(var.azure_rbac.cluster_admin_principal_ids) > 0
     )
-    error_message = "Postgres stores its credentials in the created Key Vault: grant whoever runs Terraform access through key_vault_secrets_officer_groups or azure_rbac.cluster_admin_principal_ids."
+    error_message = "Postgres stores its credentials in the Key Vault: grant whoever runs Terraform access through key_vault_secrets_officer_groups or azure_rbac.cluster_admin_principal_ids."
   }
 }
 
@@ -220,11 +243,6 @@ variable "create_postgres" {
   description = "Create a private PostgreSQL flexible server in the same VNet."
   type        = bool
   default     = true
-
-  validation {
-    condition     = !var.create_postgres || var.create_azure_key_vault || var.existing_azure_key_vault != null
-    error_message = "create_postgres stores the administrator credentials in a Key Vault: set create_azure_key_vault or existing_azure_key_vault."
-  }
 }
 
 variable "postgres_name" {
@@ -341,6 +359,54 @@ variable "postgres_administrator_password" {
   type        = string
   sensitive   = true
   ephemeral   = true
+  default     = null
+}
+
+# --- Blob storage -------------------------------------------------------------------------------
+
+variable "create_blob_storage" {
+  description = "Create the storage account behind S3Proxy, reachable through a private endpoint in the cluster's VNet, and the s3proxy workload identity that reads and writes it."
+  type        = bool
+  default     = true
+}
+
+variable "blob_storage_account_name" {
+  description = "Account names are globally unique (<name>.blob.core.windows.net), so a custom name is often necessary. Defaults to the cluster name's letters and digits followed by a random string."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.blob_storage_account_name == null || can(regex("^[a-z0-9]{3,24}$", var.blob_storage_account_name))
+    error_message = "The storage account name must be 3 to 24 lowercase letters and digits."
+  }
+}
+
+variable "blob_storage_replication_type" {
+  description = "LRS, ZRS, GRS, RAGRS, GZRS or RAGZRS."
+  type        = string
+  default     = "ZRS"
+}
+
+variable "blob_storage_soft_delete_retention_days" {
+  description = "Days a deleted blob or container can be restored for, between 1 and 365."
+  type        = number
+  default     = 30
+}
+
+variable "blob_storage_subnet_cidr" {
+  description = "Range of the private endpoint's subnet. Defaults to the fifth /24 of vnet_cidr. Required when existing_vnet_name is set."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = !var.create_blob_storage || var.existing_vnet_name == null || var.blob_storage_subnet_cidr != null
+    error_message = "Set blob_storage_subnet_cidr explicitly when existing_vnet_name is used."
+  }
+}
+
+variable "blob_storage_existing_private_dns_zone_id" {
+  description = "An existing privatelink.blob.core.windows.net zone already linked to the cluster's VNet. Created when unset."
+  type        = string
   default     = null
 }
 

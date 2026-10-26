@@ -27,7 +27,7 @@ provider "registry.terraform.io/azure/azapi" {
 
 provider "registry.terraform.io/hashicorp/azurerm" {
   version     = "5.6.0"
-  constraints = ">= 5.0.0, ~> 5.6"
+  constraints = ">= 5.0.0, >= 5.5.0, ~> 5.6"
   hashes = [
     "h1:0GEze9b+Z5XuA1H9v+NfgQ7yO9XfxV4YaCvWAJ3Ul/k=",
     "h1:41VFAA3JqAsqQovfhif8aRkmgv6KuuppxSLe34mK7j8=",

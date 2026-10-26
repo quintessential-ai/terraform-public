@@ -2,20 +2,10 @@
 # private API server on 443. Standard is the lowest SKU with tunneling.
 # https://learn.microsoft.com/en-us/azure/bastion/bastion-connect-to-aks-private-cluster
 
-# Only read when the caller leaves location unset.
-data "azurerm_resource_group" "this" {
-  count = var.location == null ? 1 : 0
-  name  = var.resource_group_name
-}
-
-locals {
-  location = coalesce(var.location, one(data.azurerm_resource_group.this[*].location))
-}
-
 resource "azurerm_public_ip" "this" {
   name                = var.name
   resource_group_name = var.resource_group_name
-  location            = local.location
+  location            = var.region
   sku                 = "Standard"
   allocation_method   = "Static"
   tags                = var.tags
@@ -24,7 +14,7 @@ resource "azurerm_public_ip" "this" {
 resource "azurerm_bastion_host" "this" {
   name                = var.name
   resource_group_name = var.resource_group_name
-  location            = local.location
+  location            = var.region
   sku                 = "Standard"
   scale_units         = var.scale_units
 
@@ -59,7 +49,7 @@ resource "azurerm_role_assignment" "tunnel" {
 resource "azurerm_network_security_group" "apiserver" {
   name                = "${var.name}-apiserver"
   resource_group_name = var.resource_group_name
-  location            = local.location
+  location            = var.region
   tags                = var.tags
 
   security_rule {
@@ -96,7 +86,7 @@ resource "azurerm_subnet_network_security_group_association" "apiserver" {
 resource "azurerm_network_security_group" "nodes" {
   name                = "${var.name}-nodes"
   resource_group_name = var.resource_group_name
-  location            = local.location
+  location            = var.region
   tags                = var.tags
 
   security_rule {
@@ -109,6 +99,23 @@ resource "azurerm_network_security_group" "nodes" {
     source_port_range          = "*"
     destination_address_prefix = "*"
     destination_port_range     = "*"
+  }
+
+  # This NSG's default rules deny the internet. AKS opens the gateway's public IP only in its own
+  # NSG on the nodes, so without this rule the public LoadBalancer Service is unreachable.
+  dynamic "security_rule" {
+    for_each = var.gateway_public_ip == null ? [] : [var.gateway_public_ip]
+    content {
+      name                       = "allow-internet-to-gateway"
+      priority                   = 200
+      direction                  = "Inbound"
+      access                     = "Allow"
+      protocol                   = "Tcp"
+      source_address_prefix      = "Internet"
+      source_port_range          = "*"
+      destination_address_prefix = security_rule.value.address
+      destination_port_range     = "443"
+    }
   }
 }
 

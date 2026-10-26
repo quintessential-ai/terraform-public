@@ -33,22 +33,22 @@ variable "features" {
     automator_email                 = optional(bool, false)
     usage_metrics                   = optional(bool, true)
 
-    stevie_mail_delegated       = optional(bool, false)
-    stevie_calendar_delegated   = optional(bool, false)
-    stevie_onedrive_delegated   = optional(bool, false)
-    stevie_people_delegated     = optional(bool, false)
-    stevie_meetings_delegated   = optional(bool, false)
-    stevie_teams_delegated      = optional(bool, false)
-    stevie_sharepoint_delegated = optional(bool, false)
+    stevie_mail_delegated       = optional(bool, true)
+    stevie_calendar_delegated   = optional(bool, true)
+    stevie_onedrive_delegated   = optional(bool, true)
+    stevie_people_delegated     = optional(bool, true)
+    stevie_meetings_delegated   = optional(bool, true)
+    stevie_teams_delegated      = optional(bool, true)
+    stevie_sharepoint_delegated = optional(bool, true)
 
-    stevie_mail_drafting_delegated = optional(bool, false)
-    stevie_mail_sending_delegated  = optional(bool, false)
+    stevie_mail_drafting_delegated = optional(bool, true)
+    stevie_mail_sending_delegated  = optional(bool, true)
   })
   default = {}
 
   validation {
     condition     = !var.features.stevie_mail_sending_delegated || var.features.stevie_mail_drafting_delegated
-    error_message = "stevie_mail_sending_delegated needs stevie_mail_drafting_delegated: Stevie sends only drafts it has written."
+    error_message = "stevie_mail_sending_delegated needs stevie_mail_drafting_delegated: Stevie sends only drafts it has written. Both default to true, so to turn off drafting also set stevie_mail_sending_delegated = false."
   }
 }
 
@@ -101,7 +101,7 @@ variable "certificate_validity_in_months" {
 variable "create_and_assign_access_groups" {
   description = "Create Complexio's standard security groups and assign them to Complexio - SSO, so their members can sign in. You manage who is in each group."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "access_group_name_prefix" {

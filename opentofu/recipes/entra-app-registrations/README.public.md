@@ -13,7 +13,7 @@ directory.
 | **Complexio - Backend** app registration and enterprise application | What Complexio's services use to reach Microsoft 365, with the permissions of the features you switch on. |
 | Admin consent for both | So users aren't asked to consent when they first sign in. |
 | **Complexio mailboxes** administrative unit | The mailboxes Complexio may reach. See [Mailbox access](#mailbox-access). |
-| Access groups (when `create_and_assign_access_groups` is on) | Security groups, assigned to Complexio - SSO. See [Access groups](#access-groups). |
+| Access groups (unless `create_and_assign_access_groups` is off) | Security groups, assigned to Complexio - SSO. See [Access groups](#access-groups). |
 
 | In your Key Vault, under `<key_vault_secret_prefix>--` | Holds |
 | --- | --- |
@@ -34,26 +34,29 @@ Nothing leaves your tenant. Complexio's services read these entries from the vau
 
 - **Roles.** Apply as a **Global Administrator** for now; a narrower set of roles is being
   confirmed. On the Key Vault you also need **Key Vault Certificates Officer** and
-  **Key Vault Secrets Officer**. The [Mailbox access](#mailbox-access) step needs an
-  **Exchange Administrator**.
-- **A Key Vault** with Azure RBAC authorization, in a subscription you can reach. If the vault
-  has a firewall, allow the machine you run Terraform from.
+  **Key Vault Secrets Officer**: `complexio-cluster` grants both to the groups in its
+  `key_vault_secrets_officer_groups`, so be in one of them. The
+  [Mailbox access](#mailbox-access) step needs an **Exchange Administrator**.
+- **The Key Vault that `complexio-cluster` creates.** Apply that recipe first.
 - **The host names** your users open Complexio on. Complexio confirms them with you.
-- **Terraform 1.11.4 or later**, or OpenTofu, and the Azure CLI signed in to your tenant
-  (`az login --tenant <tenant_id>`).
+- **Terraform or OpenTofu**, at the versions in
+  [How can I use it?](../../README.public.md#how-can-i-use-it), and the Azure CLI signed in to
+  your tenant (`az login --tenant <tenant_id>`).
 - **A remote backend for the state**, as for every recipe. See
   [How can I use it?](../../README.public.md#how-can-i-use-it).
 
 ## Inputs
 
-Run the recipe like the others, from `//terraform/recipes/entra-app-registrations`, through
-Terragrunt or Terraform (see [How can I use it?](../../README.public.md#how-can-i-use-it)). The
+Run the recipe like the others, from `//terraform/recipes/entra-app-registrations`. With
+Terragrunt, the [example](../../README.public.md#consuming-it-via-terragrunt-golden-path) reads
+`tenant_id`, `subscription_id` and `key_vault_id` from the outputs of `complexio-cluster`. The
 inputs it needs are:
 
 ```hcl
+# key_vault_id is the key_vault_id output of complexio-cluster.
 tenant_id       = "<tenant_id>"
 subscription_id = "<subscription_id of the Key Vault>"
-key_vault_id    = "/subscriptions/<subscription_id>/resourceGroups/<resource_group>/providers/Microsoft.KeyVault/vaults/<key_vault_name>"
+key_vault_id    = "<key_vault_id>"
 browser_hosts   = ["complexio.example.com"]
 ```
 
@@ -61,16 +64,17 @@ browser_hosts   = ["complexio.example.com"]
 <summary>A fuller example</summary>
 
 ```hcl
+# key_vault_id is the key_vault_id output of complexio-cluster.
 tenant_id       = "<tenant_id>"
 subscription_id = "<subscription_id of the Key Vault>"
-key_vault_id    = "/subscriptions/<subscription_id>/resourceGroups/<resource_group>/providers/Microsoft.KeyVault/vaults/<key_vault_name>"
+key_vault_id    = "<key_vault_id>"
 
 # Host names your users open Complexio on. Complexio confirms them with you.
 browser_hosts = ["complexio.example.com"]
 # MCP server host names, if you use them.
 mcp_hosts = []
 
-# What Complexio may do in your Microsoft 365 tenant. Switch on only what you have agreed with
+# What Complexio may do in your Microsoft 365 tenant. Switch off anything you have not agreed with
 # Complexio; a switch left out keeps the default shown here.
 features = {
   # Without a signed-in user.
@@ -82,21 +86,22 @@ features = {
   usage_metrics                   = true  # Report usage by department.
 
   # As the signed-in user, limited to what that user can already see.
-  stevie_mail_delegated       = false
-  stevie_calendar_delegated   = false
-  stevie_onedrive_delegated   = false
-  stevie_people_delegated     = false
-  stevie_meetings_delegated   = false
-  stevie_teams_delegated      = false
-  stevie_sharepoint_delegated = false
+  stevie_mail_delegated       = true
+  stevie_calendar_delegated   = true
+  stevie_onedrive_delegated   = true
+  stevie_people_delegated     = true
+  stevie_meetings_delegated   = true
+  stevie_teams_delegated      = true
+  stevie_sharepoint_delegated = true
 
+  # Mail drafting and sending are on by default and are consented for Complexio - Backend.
   # Let Stevie write mail drafts, and send the ones the user approves, as the user.
-  stevie_mail_drafting_delegated = false
-  stevie_mail_sending_delegated  = false # Needs stevie_mail_drafting_delegated.
+  stevie_mail_drafting_delegated = true
+  stevie_mail_sending_delegated  = true # Needs stevie_mail_drafting_delegated.
 }
 
 # Create Complexio's standard access groups and assign them to Complexio - SSO.
-create_and_assign_access_groups = false
+create_and_assign_access_groups = true
 # Names the groups <prefix>-owners, <prefix>-ea and so on.
 access_group_name_prefix = "complexio"
 # One Stevie access group per department, named complexio-stevie-<department>.
@@ -124,7 +129,8 @@ The plan lists every permission it grants. `terraform output application_permiss
 ## Features
 
 Each switch in `features` grants the Microsoft Graph permissions one feature needs, and nothing
-is granted for a switch that is off. Switch on only what you have agreed with Complexio.
+is granted for a switch that is off. Switch off anything you have not agreed with Complexio:
+the `stevie_*` switches, including mail drafting and sending, are on by default.
 
 | Switch | Default | What it lets Complexio do |
 | --- | --- | --- |
@@ -134,24 +140,39 @@ is granted for a switch that is off. Switch on only what you have agreed with Co
 | `settings_directory` | on | List users, departments and security groups in Settings. |
 | `automator_email` | off | Let Enterprise Automator draft and send mail from the mailboxes you choose. Needs the [Mailbox access](#mailbox-access) step. |
 | `usage_metrics` | on | Report usage by department. |
-| `stevie_mail_delegated` | off | Let Stevie read and send the signed-in user's mail. |
-| `stevie_calendar_delegated` | off | Let Stevie read the signed-in user's calendar and check attendees' availability. |
-| `stevie_onedrive_delegated` | off | Let Stevie browse and read the signed-in user's OneDrive. |
-| `stevie_people_delegated` | off | Let Stevie search people in your organization. |
-| `stevie_meetings_delegated` | off | Let Stevie find meetings and read their transcripts. |
-| `stevie_teams_delegated` | off | Let Stevie read the signed-in user's teams, channels and chats. |
-| `stevie_sharepoint_delegated` | off | Let Stevie search and read the SharePoint sites, lists and files the signed-in user can open. |
-| `stevie_mail_drafting_delegated` | off | Let Stevie write reply and forward drafts in the signed-in user's mailbox. |
-| `stevie_mail_sending_delegated` | off | Let Stevie send the drafts the signed-in user approves. Needs `stevie_mail_drafting_delegated`. |
+| `stevie_mail_delegated` | on | Let Stevie read and send the signed-in user's mail. |
+| `stevie_calendar_delegated` | on | Let Stevie read the signed-in user's calendar and check attendees' availability. |
+| `stevie_onedrive_delegated` | on | Let Stevie browse and read the signed-in user's OneDrive. |
+| `stevie_people_delegated` | on | Let Stevie search people in your organization. |
+| `stevie_meetings_delegated` | on | Let Stevie find meetings and read their transcripts. |
+| `stevie_teams_delegated` | on | Let Stevie read the signed-in user's teams, channels and chats. |
+| `stevie_sharepoint_delegated` | on | Let Stevie search and read the SharePoint sites, lists and files the signed-in user can open. |
+| `stevie_mail_drafting_delegated` | on | Let Stevie write reply and forward drafts in the signed-in user's mailbox. |
+| `stevie_mail_sending_delegated` | on | Let Stevie send the drafts the signed-in user approves. Needs `stevie_mail_drafting_delegated`. |
 
 Switches ending in `_delegated` act as the signed-in user, so they never reach further than what
-that user can already see. They are granted to Complexio - SSO, except mail drafting and sending,
-which are granted to Complexio - Backend. The others work without a signed-in user.
+that user can already see. They are granted to Complexio - Backend, and to Complexio - SSO as
+well, except mail drafting and sending, which only Complexio - Backend gets. The others work
+without a signed-in user.
 [`permissions.tf`](permissions.tf) lists each permission with what it is needed for.
 
 `additional_application_permissions` adds further application permissions by name, if Complexio
 asks for them. It refuses mailbox, calendar and contact permissions, which would reach every
 mailbox in your tenant.
+
+## Upgrading
+
+Earlier versions of this recipe left every `stevie_*` switch and `create_and_assign_access_groups`
+off. They are now on by default, so the next `apply` of a configuration that omits them:
+
+- Grants admin consent for the Stevie delegated permissions, including `Mail.Send` and
+  `Mail.ReadWrite` (mail drafting and sending).
+- Creates the standard access groups. If you already created groups such as `complexio-owners`
+  by hand, the apply stops. Choose another `access_group_name_prefix` or opt out.
+
+To keep the previous behaviour, set each `stevie_*` switch you don't want to `false` (turning off
+`stevie_mail_drafting_delegated` also needs `stevie_mail_sending_delegated = false`), and set
+`create_and_assign_access_groups = false`.
 
 ## Mailbox access
 
@@ -160,9 +181,10 @@ can grant it for chosen mailboxes only, so that is where `email_ingestion` and `
 grant it. This recipe never grants mailbox access in Entra: if it did, the Exchange scope would
 have no effect, because Exchange adds the two together.
 
-> **Don't add mail permissions to Complexio - Backend in the Entra admin center.** Its API
-> permissions show no mail permission, and that is intended: mailbox access is in Exchange.
-> Adding `Mail.Read`, `Mail.ReadWrite` or `Mail.Send` as an application permission and granting
+> **Don't add application mail permissions to Complexio - Backend in the Entra admin center.**
+> Its API permissions show no application mail permission, and that is intended: mailbox access
+> is in Exchange. The delegated mail permissions of the Stevie switches are expected there; they
+> reach only the signed-in user's own mailbox. Adding `Mail.Read`, `Mail.ReadWrite` or `Mail.Send` as an application permission and granting
 > admin consent would open every mailbox in your tenant. A later apply removes the permission
 > from the list but not the consent, so revoke it yourself under the enterprise application's
 > **Permissions** if it ever happens.
@@ -189,8 +211,7 @@ Microsoft documents this in
 
 ## Access groups
 
-With `create_and_assign_access_groups = true`, the recipe creates these security groups and
-assigns them to Complexio - SSO:
+By default, the recipe creates these security groups and assigns them to Complexio - SSO:
 
 | Group | Grants, once mapped in Settings |
 | --- | --- |
@@ -208,10 +229,11 @@ You manage who is in each group. Add users directly: nested groups don't grant a
 `terraform output group_object_ids` with Complexio, since Settings refers to the groups by object
 ID. If a group with one of these names already exists, for example a `complexio-owners` you
 created by hand, the apply stops rather than creating a second one. Choose another
-`access_group_name_prefix`, or leave this off and assign your existing groups yourself.
+`access_group_name_prefix`, or set `create_and_assign_access_groups = false` and assign your
+existing groups yourself.
 
-You can also leave this off and assign your own security groups to the Complexio - SSO
-enterprise application.
+To use only your own security groups, set `create_and_assign_access_groups = false` and assign
+them to the Complexio - SSO enterprise application.
 
 ## What you manage in the Entra admin center
 

@@ -2,8 +2,8 @@
 # sign in with, and Complexio - Backend, which Complexio's services use to reach Microsoft 365.
 # Their credentials and IDs are written to your Key Vault.
 #
-# Each part is in its own file: permissions.tf, branding.tf, backend.tf, sso.tf, client-secrets.tf,
-# certificates.tf, key-vault.tf, access-groups.tf and mailbox-access.tf.
+# Each part is in its own file: permissions.tf, branding.tf, app-backend.tf, sso.tf,
+# client-secrets.tf, certificates.tf, key-vault.tf, access-groups.tf and mailbox-access.tf.
 
 # The tenant being configured, whose ID Complexio's services sign in against.
 data "azuread_client_config" "current" {}

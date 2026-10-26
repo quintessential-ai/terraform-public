@@ -2,21 +2,14 @@
 # client ID can assume Azure roles without a secret.
 # https://learn.microsoft.com/en-us/azure/aks/workload-identity-deploy-cluster
 
-# Only read when the caller leaves location unset.
-data "azurerm_resource_group" "this" {
-  count = var.location == null ? 1 : 0
-  name  = var.resource_group_name
-}
-
 locals {
-  location = coalesce(var.location, one(data.azurerm_resource_group.this[*].location))
-  name     = "${var.name_prefix}-${var.namespace}-${var.service_account_name}"
+  name = "${var.name_prefix}-${var.namespace}-${var.service_account_name}"
 }
 
 resource "azurerm_user_assigned_identity" "this" {
   name                = local.name
   resource_group_name = var.resource_group_name
-  location            = local.location
+  location            = var.region
   tags                = var.tags
 }
 
