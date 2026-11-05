@@ -4,12 +4,15 @@ resource "random_uuid" "sso_access" {}
 resource "random_uuid" "sso_access_as_user" {}
 
 # Where Microsoft Entra may send users back to after sign-in and sign-out, on each of your hosts.
-# Entra doesn't accept the same address on both the web and the single-page application platform,
-# so each address is on one of them only.
+# Entra doesn't accept the same address on more than one of the web, single-page application and
+# mobile and desktop platforms, so each address is on one of them only.
 locals {
   sso_web_redirect_uris = flatten([
-    for host in var.browser_hosts : ["https://${host}/auth/callback", "https://${host}/login"]
+    for host in var.browser_hosts : [
+      "https://${host}/auth/callback", "https://${host}/login", "https://${host}/apps/auth/callback",
+    ]
   ])
+  sso_public_client_redirect_uris = [for host in var.browser_hosts : "https://${host}/apps/callback"]
   sso_spa_redirect_uris = distinct(concat(
     flatten([for host in var.browser_hosts : [
       for path in ["/", "/cpx-support", "/stevie/", "/oauth/callback", "/stevie/chat", "/settings/", "/eav2/", "/task-board/"] :
@@ -81,6 +84,10 @@ resource "azuread_application" "sso" {
 
   single_page_application {
     redirect_uris = local.sso_spa_redirect_uris
+  }
+
+  public_client {
+    redirect_uris = local.sso_public_client_redirect_uris
   }
 
   required_resource_access {
