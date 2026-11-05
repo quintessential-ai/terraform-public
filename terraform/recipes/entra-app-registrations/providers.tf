@@ -15,4 +15,8 @@ provider "azuread" {
 provider "azurerm" {
   subscription_id = var.subscription_id
   features {}
+
+  # The recipe uses Key Vault and role assignments only, so applying needs no right to register
+  # resource providers in the subscription. It is azurerm 5's default; set here so it stays so.
+  resource_provider_registrations = "none"
 }

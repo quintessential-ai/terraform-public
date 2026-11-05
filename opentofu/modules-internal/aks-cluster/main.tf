@@ -105,7 +105,7 @@ resource "azurerm_kubernetes_cluster" "this" {
 
   azure_active_directory_role_based_access_control {
     tenant_id          = local.tenant_id
-    azure_rbac_enabled = var.azure_rbac_enabled
+    azure_rbac_enabled = true
   }
 
   # Node auto-provisioning (Karpenter), with no default NodePools so ours are the only ones.

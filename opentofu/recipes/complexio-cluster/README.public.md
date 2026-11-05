@@ -2,7 +2,7 @@
 
 Creates the network, the private AKS cluster and the Azure resources Complexio runs on in the
 customer's subscription. This page covers sending the cluster's traffic through the customer's own
-network appliance.
+network appliance, and bootstrapping the cluster.
 
 ## Traffic through the customer's existing network appliance
 
@@ -40,7 +40,17 @@ The cluster's nodes cannot start until these are in place.
      take HTTPS.
 
    The new rule collection is then listed and the policy's provisioning state is **Succeeded**.
-2. **Peering rights.** Terraform peers the appliance's VNet with the cluster's VNet, both ways.
+2. **Complexio's registry and Key Vault.** The appliance allows HTTPS from
+   `10.224.0.0/24` to:
+   - `ghcr.io` and `pkg-containers.githubusercontent.com`, where the Flux and ExternalSecrets charts
+     and images the cluster starts from live.
+   - `complexio.azurecr.io` and Complexio's registry data endpoint, which Complexio gives you.
+   - Complexio's Key Vault, `<vault>.vault.azure.net`, which Complexio gives you.
+
+   On Azure Firewall, add a second rule collection to the same policy: name `complexio`, type
+   **Application**, priority `210`, action **Allow**, and one rule from source `10.224.0.0/24`,
+   protocol `https:443`, destination type **FQDN**, to these FQDNs.
+3. **Peering rights.** Terraform peers the appliance's VNet with the cluster's VNet, both ways.
    Whoever runs Terraform needs **Network Contributor** on the appliance's VNet. The appliance's
    VNet may be in another subscription of the same tenant: set
    `existing_network_appliance_subscription_id` then.
@@ -56,3 +66,30 @@ existing_network_appliance_subscription_id = "<appliance VNet subscription ID>"
 ```
 
 After apply, point the application DNS records at the appliance's public IP.
+
+## Bootstrap
+
+The recipe installs Flux and ExternalSecrets and points Flux at Complexio's deployment artifact,
+`oci://complexio.azurecr.io/deployments/<customer_name>`. It runs once per cluster, through AKS run
+command, so it needs no network path to the API server.
+
+`external_key_vault` come from Complexio.
+
+```hcl
+external_key_vault = {
+  external_secrets_client_id = "<client ID from Complexio>"
+  name                       = "<vault_name>"
+}
+```
+
+## Terraform inputs and outputs in Key Vault
+
+The recipe writes its variables and its outputs to its Key Vault, each as one JSON object keyed by
+name, so that ExternalSecrets can bring them into the cluster:
+
+- `tf-complexio-cluster--INPUTS`: every variable except `postgres_administrator_password`.
+- `tf-complexio-cluster--OUTPUTS`: every output.
+
+A variable or output that is null is left out. Whoever runs Terraform writes both, so needs
+`Key Vault Secrets Officer` through `key_vault_secrets_officer_groups`, or `Key Vault Administrator`
+through `azure_rbac.cluster_admin_principal_ids`.

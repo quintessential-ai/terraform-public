@@ -5,8 +5,15 @@ resource "random_uuid" "sso_access_as_user" {}
 
 # Where Microsoft Entra may send users back to after sign-in and sign-out, on each of your hosts.
 # Entra doesn't accept the same address on both the web and the single-page application platform,
-# so each address is on one of them only.
+# so each address is on one of them only. The mobile and desktop platform's addresses are where
+# Claude signs in to the Context Broker: Claude Code's local callback, and the one Claude Desktop and
+# claude.ai share.
 locals {
+  sso_public_client_redirect_uris = [
+    "http://localhost/callback",
+    "https://claude.ai/api/mcp/auth_callback",
+  ]
+
   sso_web_redirect_uris = flatten([
     for host in var.browser_hosts : ["https://${host}/auth/callback", "https://${host}/login"]
   ])
@@ -24,11 +31,11 @@ locals {
 # Its tokens carry only the groups assigned to its enterprise application, as object IDs, which is
 # how Complexio knows which access groups a user is in. It exposes two scopes for Complexio's own
 # applications, and asks for the sign-in permissions, the delegated permissions of the features
-# you switch on, and Complexio - Backend's access_as_user.
+# you switch on, Complexio - Backend's access_as_user and its own access.
 #
 # Later applies leave its owners and notes, and its marketing, privacy, support and terms URLs, as
-# you set them. The application ID URI is set by the next resource, since it contains the client
-# ID.
+# you set them. The application ID URI and the API permissions are set by the resources after it,
+# since the URI and its own access scope contain its client ID.
 resource "azuread_application" "sso" {
   display_name            = var.display_names.sso
   description             = local.sso_description
@@ -83,31 +90,18 @@ resource "azuread_application" "sso" {
     redirect_uris = local.sso_spa_redirect_uris
   }
 
-  required_resource_access {
-    resource_app_id = data.azuread_service_principal.msgraph.client_id
+  # Claude signs in with PKCE as a public client; it never needs public client flows.
+  fallback_public_client_enabled = false
 
-    dynamic "resource_access" {
-      for_each = setunion(local.known_sign_in_permissions, local.known_sso_delegated_permissions)
-      content {
-        id   = local.graph_scope_ids[resource_access.value]
-        type = "Scope"
-      }
-    }
-  }
-
-  required_resource_access {
-    resource_app_id = azuread_application.backend.client_id
-
-    resource_access {
-      id   = random_uuid.backend_access_as_user.result
-      type = "Scope"
-    }
+  public_client {
+    redirect_uris = local.sso_public_client_redirect_uris
   }
 
   lifecycle {
     ignore_changes = [
       identifier_uris, owners, notes, tags, feature_tags, service_management_reference,
       marketing_url, privacy_statement_url, support_url, terms_of_service_url,
+      required_resource_access,
     ]
   }
 }
@@ -116,6 +110,30 @@ resource "azuread_application" "sso" {
 resource "azuread_application_identifier_uri" "sso" {
   application_id = azuread_application.sso.id
   identifier_uri = "api://${azuread_application.sso.client_id}"
+}
+
+# Complexio - SSO's API permissions. They are separate resources rather than blocks on the
+# registration because one of them is its own access scope, which contains its client ID.
+resource "azuread_application_api_access" "sso_graph" {
+  application_id = azuread_application.sso.id
+  api_client_id  = data.azuread_service_principal.msgraph.client_id
+  scope_ids = [
+    for permission in setunion(local.known_sign_in_permissions, local.known_sso_delegated_permissions) :
+    local.graph_scope_ids[permission]
+  ]
+}
+
+resource "azuread_application_api_access" "sso_backend" {
+  application_id = azuread_application.sso.id
+  api_client_id  = azuread_application.backend.client_id
+  scope_ids      = [random_uuid.backend_access_as_user.result]
+}
+
+# Its own access scope, which the Context Broker accepts when Claude signs in.
+resource "azuread_application_api_access" "sso_self" {
+  application_id = azuread_application.sso.id
+  api_client_id  = azuread_application.sso.client_id
+  scope_ids      = [random_uuid.sso_access.result]
 }
 
 # Complexio - SSO's enterprise application. Only the users and groups assigned to it can sign in;
@@ -153,4 +171,11 @@ resource "azuread_service_principal_delegated_permission_grant" "sso_backend" {
   service_principal_object_id          = azuread_service_principal.sso.object_id
   resource_service_principal_object_id = azuread_service_principal.backend.object_id
   claim_values                         = ["access_as_user"]
+}
+
+# Admin consent for Complexio - SSO to use its own access scope, for everyone in your organization.
+resource "azuread_service_principal_delegated_permission_grant" "sso_self" {
+  service_principal_object_id          = azuread_service_principal.sso.object_id
+  resource_service_principal_object_id = azuread_service_principal.sso.object_id
+  claim_values                         = ["access"]
 }

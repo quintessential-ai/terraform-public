@@ -1,0 +1,158 @@
+##############################################
+# Manifests needed to get the ACR pull token #
+##############################################
+
+# The ServiceAccount that will be authorized by our Service Principal for accessing the Key Vault
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: complexio-key-vault
+  namespace: external-secrets
+  annotations:
+    azure.workload.identity/client-id: ${jsonencode(external_key_vault_external_secrets_client_id)}
+    azure.workload.identity/tenant-id: ${jsonencode(external_key_vault_tenant_id)}
+---
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: complexio-key-vault
+spec:
+  provider:
+    # No tenantId: ExternalSecrets reads it from the ServiceAccount's annotation, and rejects a store
+    # that sets both.
+    azurekv:
+      authType: WorkloadIdentity
+      vaultUrl: ${jsonencode(external_key_vault_url)}
+      serviceAccountRef:
+        name: complexio-key-vault
+        namespace: external-secrets
+---
+# A ClusterExternalSecret rather than an ExternalSecret: the artifact's own acr-pull creates an
+# ExternalSecret acr-pull in each of its namespaces, which collides with one it does not own.
+apiVersion: external-secrets.io/v1
+kind: ClusterExternalSecret
+metadata:
+  name: acr-pull
+spec:
+  namespaces:
+    - flux-system
+    - external-secrets
+  refreshTime: 1h
+  externalSecretName: acr-pull
+  externalSecretSpec:
+    refreshInterval: 10m
+    secretStoreRef:
+      name: complexio-key-vault
+      kind: ClusterSecretStore
+    target:
+      name: acr-pull
+      template:
+        type: kubernetes.io/dockerconfigjson
+        data:
+          .dockerconfigjson: |
+            {"auths":{${jsonencode(acr_login_server)}:{"username":"{{ .username }}","password":"{{ .password }}"}}}
+    data:
+      - secretKey: username
+        remoteRef:
+          key: deployments--ACR-TOKEN-USERNAME
+      - secretKey: password
+        remoteRef:
+          key: deployments--ACR-TOKEN-PASSWORD
+---
+
+################################
+# The top-level flux artifacts #
+################################
+
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  interval: 5m
+  url: ${jsonencode(oci_source_url)}
+  ref: ${jsonencode(oci_source_ref)}
+  provider: generic
+  secretRef:
+    name: acr-pull
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ${jsonencode(oci_source_path)}
+  prune: true
+  sourceRef:
+    kind: OCIRepository
+    name: flux-system
+---
+
+########################################################################
+# The Terraform inputs and outputs, which Flux substitutes values from #
+########################################################################
+
+# The customer's Key Vault holds them. The artifact takes these objects over with values substituted
+# from the Secrets they create, so the seed plants their first copies.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: customer-key-vault
+  namespace: external-secrets
+  annotations:
+    azure.workload.identity/client-id: ${jsonencode(customer_key_vault_external_secrets_client_id)}
+    azure.workload.identity/tenant-id: ${jsonencode(customer_key_vault_tenant_id)}
+---
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: customer-key-vault
+spec:
+  provider:
+    azurekv:
+      authType: WorkloadIdentity
+      vaultUrl: ${jsonencode(customer_key_vault_url)}
+      serviceAccountRef:
+        name: customer-key-vault
+        namespace: external-secrets
+---
+# A key per top-level input; a nested input arrives as JSON.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: tf-complexio-cluster-inputs
+  namespace: flux-system
+spec:
+  refreshInterval: 10m
+  secretStoreRef:
+    name: customer-key-vault
+    kind: ClusterSecretStore
+  target:
+    name: tf-complexio-cluster-inputs
+    template:
+      mergePolicy: Merge
+      data:
+        # Flux substitutes whole keys only.
+        external_key_vault_external_secrets_client_id: '{{ (.external_key_vault | fromJson).external_secrets_client_id }}'
+  dataFrom:
+    - extract:
+        key: tf-complexio-cluster--INPUTS
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: tf-complexio-cluster-outputs
+  namespace: flux-system
+spec:
+  refreshInterval: 10m
+  secretStoreRef:
+    name: customer-key-vault
+    kind: ClusterSecretStore
+  target:
+    name: tf-complexio-cluster-outputs
+  dataFrom:
+    - extract:
+        key: tf-complexio-cluster--OUTPUTS

@@ -41,8 +41,8 @@ variable "features" {
     stevie_teams_delegated      = optional(bool, true)
     stevie_sharepoint_delegated = optional(bool, true)
 
-    stevie_mail_drafting_delegated = optional(bool, true)
-    stevie_mail_sending_delegated  = optional(bool, true)
+    stevie_mail_drafting_delegated = optional(bool, false)
+    stevie_mail_sending_delegated  = optional(bool, false)
   })
   default = {}
 
@@ -68,6 +68,24 @@ variable "additional_application_permissions" {
   validation {
     condition     = length(setintersection(var.additional_application_permissions, ["Chat.Read.All", "Chat.ReadWrite.All"])) == 0
     error_message = "Chat.Read.All and Chat.ReadWrite.All can't be added: they would reach every chat in the tenant, including one-to-one chats. Teams ingestion reads only the chats the Complexio Assistant app is installed in."
+  }
+}
+
+# --- Teams ingestion ----------------------------------------------------------------------------
+
+variable "event_hub_namespace_id" {
+  description = "Resource ID of the Event Hubs namespace Microsoft Graph sends Teams change notifications to, such as \"/subscriptions/<subscription_id>/resourceGroups/<resource_group>/providers/Microsoft.EventHub/namespaces/complexio-msgraph\". Needed with teams_ingestion_where_installed or teams_ingestion_tenant_wide, and unused otherwise. It may be in another subscription than the Key Vault."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.event_hub_namespace_id == null || can(regex("(?i)^/subscriptions/[0-9a-f-]{36}/resourceGroups/[^/]+/providers/Microsoft\\.EventHub/namespaces/[^/]+$", var.event_hub_namespace_id))
+    error_message = "event_hub_namespace_id must be an Event Hubs namespace's resource ID: /subscriptions/<subscription_id>/resourceGroups/<resource_group>/providers/Microsoft.EventHub/namespaces/<namespace>. The namespace's Properties page in the Azure portal shows it."
+  }
+
+  validation {
+    condition     = var.event_hub_namespace_id != null || !(var.features.teams_ingestion_where_installed || var.features.teams_ingestion_tenant_wide)
+    error_message = "Teams ingestion needs event_hub_namespace_id: Complexio - Backend reads Microsoft Graph's Teams change notifications from that Event Hubs namespace, by default complexio-msgraph, and the recipe gives it Azure Event Hubs Data Receiver there. Set it to the namespace's resource ID, or switch off teams_ingestion_where_installed and teams_ingestion_tenant_wide."
   }
 }
 

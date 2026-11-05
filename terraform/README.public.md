@@ -14,6 +14,7 @@ You can consume our code through Terragrunt (recommended) or as a module in your
 - `Storage Blob Data Contributor` on the Storage Account where the state is stored.
 - Membership in one of the groups in `key_vault_secrets_officer_groups` (or `azure_rbac.cluster_admin_principal_ids`), since Terraform reads and writes secrets in the Key Vault it creates.
 - `Owner` role when applying the `complexio-cluster` recipe.
+- For `complexio-cluster`'s bootstrap: the Azure CLI and `bash`, with the Azure CLI logged in as a member of `azure_rbac.cluster_admin_principal_ids`. See its [README](recipes/complexio-cluster/README.public.md#bootstrap).
 - `Directory Administrator` role when applying the `entra-app-registrations` recipe.
 - Terraform 1.16.0 or later, or OpenTofu 1.12.0 or later.
 
@@ -88,6 +89,16 @@ inputs = {
     subscription_id                  = "<subscription-id>"
     resource_group_name              = "<resource-group-name>"
     region                           = "<region>"
+    customer_name                    = "<customer-name>"
+    # Given by Complexio.
+    external_key_vault = {
+        external_secrets_client_id = "<client-id>"
+        name                       = "<vault-name>"
+    }
+    # Whoever runs Terraform must be in one of these groups
+    azure_rbac = {
+        cluster_admin_principal_ids = ["<group-id>", ...]
+    }
     # The groups that get the "Key Vault Secrets Officer" and "Key Vault Certificates Officer" roles
     # in the Key Vault. Whoever runs Terraform, for this recipe or entra-app-registrations, needs to
     # be in one of these groups, since both write secrets in Key Vault. Only optional when they are
@@ -292,9 +303,10 @@ Both modules in one root module share one state, and whoever applies it needs th
 - Workload identities for ExternalSecrets, ExternalDNS, CertManager, InferenceWorker and S3Proxy.
 - A static public IP for the gateway's LoadBalancer Service (on by default).
 - A NAT gateway with a static public IP for the cluster's egress (`egress_public_ip_address` output), unless traffic goes through the customer's existing network appliance.
+- Flux and ExternalSecrets deployed into the cluster.
 - (Optional) Traffic in and out through the customer's existing network appliance, such as a firewall (`use_existing_network_appliance`). Its [README](recipes/complexio-cluster/README.public.md) lists what to set up on it before apply.
 - (Optional) Azure Bastion (`create_bastion`) to reach the private API server.
-- (Optional) Child DNS zone (`dns_zone`).
+- (Optional) Child DNS zone (`dns_zone`). ExternalDNS may write only A, AAAA, CNAME and TXT records in it, and CertManager only TXT records.
 
 ### `recipes/entra-app-registrations`
 
@@ -304,3 +316,4 @@ Applied by a directory administrator rather than a subscription owner. Its [READ
 - Their certificates, client secrets and IDs, written to the Key Vault that `complexio-cluster` creates.
 - Complexio's standard access groups, assigned to Complexio - SSO (on by default; `create_and_assign_access_groups`).
 - The Complexio mailboxes administrative unit, and, with email features, the Exchange Online PowerShell that limits Complexio's mailbox access to its members.
+- With Teams ingestion, Azure Event Hubs Data Receiver for Complexio - Backend on your Event Hubs namespace (`event_hub_namespace_id`), which may be in another subscription.

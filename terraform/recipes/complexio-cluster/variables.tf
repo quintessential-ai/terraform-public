@@ -7,6 +7,18 @@ variable "region" {
   type = string
 }
 
+variable "customer_name" {
+  description = "Given by Complexio. Names the customer's deployment artifact in Complexio's registry, oci://complexio.azurecr.io/deployments/<customer_name>."
+  type        = string
+
+  # It becomes a path component of an OCI repository. A stricter form of the OCI distribution spec's
+  # rule, which also allows '__' and runs of '-'.
+  validation {
+    condition     = can(regex("^[a-z0-9]+([._-][a-z0-9]+)*$", var.customer_name))
+    error_message = "customer_name must be lowercase letters and digits, optionally separated by single '.', '_' or '-', e.g. acme or acme-shipping."
+  }
+}
+
 variable "resource_group_name" {
   description = "Resource group to create. Mutually exclusive with existing_resource_group_name."
   type        = string
@@ -171,13 +183,17 @@ variable "existing_network_appliance_vnet_id" {
 variable "azure_rbac" {
   description = "Entra group object IDs per AKS built-in role. https://learn.microsoft.com/en-us/azure/aks/manage-azure-rbac#aks-built-in-roles"
   type = object({
-    enabled                     = optional(bool, true)
     admin_principal_ids         = optional(list(string), [])
     cluster_admin_principal_ids = optional(list(string), [])
     writer_principal_ids        = optional(list(string), [])
     reader_principal_ids        = optional(list(string), [])
   })
   default = {}
+
+  validation {
+    condition     = length(var.azure_rbac.cluster_admin_principal_ids) > 0
+    error_message = "The bootstrap runs kubectl as whoever runs Terraform, who must be in azure_rbac.cluster_admin_principal_ids."
+  }
 }
 
 # --- Container registries -----------------------------------------------------------------------
@@ -227,14 +243,6 @@ variable "key_vault_secrets_officer_groups" {
   description = "Principal IDs granted Key Vault Secrets Officer and Key Vault Certificates Officer on the Key Vault. Whoever runs this recipe or entra-app-registrations needs them."
   type        = list(string)
   default     = []
-
-  validation {
-    condition = (
-      !var.create_postgres
-      || length(var.key_vault_secrets_officer_groups) + length(var.azure_rbac.cluster_admin_principal_ids) > 0
-    )
-    error_message = "Postgres stores its credentials in the Key Vault: grant whoever runs Terraform access through key_vault_secrets_officer_groups or azure_rbac.cluster_admin_principal_ids."
-  }
 }
 
 # --- PostgreSQL ----------------------------------------------------------------------------------
@@ -365,7 +373,7 @@ variable "postgres_administrator_password" {
 # --- Blob storage -------------------------------------------------------------------------------
 
 variable "create_blob_storage" {
-  description = "Create the storage account behind S3Proxy, reachable through a private endpoint in the cluster's VNet, and the s3proxy workload identity that reads and writes it."
+  description = "Create the storage account behind S3Proxy, reachable through a private endpoint in the cluster's VNet, and the s3proxy and neo4j-backup workload identities that read and write it."
   type        = bool
   default     = true
 }
@@ -446,6 +454,26 @@ variable "dns_parent_zone_resource_group_name" {
   description = "Resource group of the parent DNS zone. Defaults to the cluster's resource group."
   type        = string
   default     = null
+}
+
+# --- Bootstrap ----------------------------------------------------------------------------------
+
+variable "external_key_vault" {
+  description = "Given by Complexio: the Key Vault it creates for this customer in its own tenant, by name (the <name> in https://<name>.vault.azure.net), and the client ID of the identity ExternalSecrets reads it with. The bootstrap points ExternalSecrets at it to get the ACR token Flux pulls the top-level artifact with."
+  type = object({
+    external_secrets_client_id = string
+    name                       = string
+  })
+
+  # Azure's rule for vault names, checked here so that a bad name is reported against this input
+  # rather than against the URL the bootstrap module builds from it.
+  validation {
+    condition = (
+      length(var.external_key_vault.name) >= 3 && length(var.external_key_vault.name) <= 24
+      && can(regex("^[a-zA-Z]([a-zA-Z0-9]|-[a-zA-Z0-9])*$", var.external_key_vault.name))
+    )
+    error_message = "external_key_vault.name must be a Key Vault name: 3 to 24 letters, digits and single hyphens, starting with a letter and ending with a letter or digit."
+  }
 }
 
 # --- Misc ---------------------------------------------------------------------------------------

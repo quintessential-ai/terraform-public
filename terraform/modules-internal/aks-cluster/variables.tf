@@ -144,12 +144,6 @@ variable "tenant_id" {
   default     = null
 }
 
-variable "azure_rbac_enabled" {
-  description = "Delegate Kubernetes authorization to Azure RBAC."
-  type        = bool
-  default     = true
-}
-
 variable "node_provisioning_mode" {
   description = "\"Auto\" hands node provisioning to Karpenter (NAP); \"Manual\" uses node pools only."
   type        = string

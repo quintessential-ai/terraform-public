@@ -61,6 +61,14 @@ output "backend_delegated_permissions" {
   value       = sort(local.known_backend_delegated_permissions)
 }
 
+output "teams_app_package" {
+  description = "With Teams ingestion, what Complexio builds the Complexio Assistant Teams app package with: the app's Microsoft Entra ID is Complexio - Backend's client ID. Send it to Complexio, then upload the package Complexio gives you in the Teams admin center. A new Complexio - Backend needs a new package."
+  value = local.teams_ingestion ? {
+    tenant_id               = data.azuread_client_config.current.tenant_id
+    web_application_info_id = azuread_application.backend.client_id
+  } : null
+}
+
 output "mailbox_administrative_unit_id" {
   description = "Object ID of the \"Complexio mailboxes\" administrative unit. Add the users whose mailboxes Complexio may reach to it."
   value       = azuread_administrative_unit.mailboxes.object_id

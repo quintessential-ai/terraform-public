@@ -181,11 +181,6 @@ resource "azurerm_public_ip" "nat" {
   sku                 = "Standard"
   allocation_method   = "Static"
   tags                = var.tags
-
-  # The cluster's egress address, which others allow-list: a recreated IP gets a new address.
-  lifecycle {
-    prevent_destroy = true
-  }
 }
 
 # A Standard NAT gateway sits in one zone at most. Without zones, Azure picks where it runs.

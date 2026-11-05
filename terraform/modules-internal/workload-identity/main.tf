@@ -27,6 +27,7 @@ resource "azurerm_role_assignment" "this" {
   principal_id         = azurerm_user_assigned_identity.this.principal_id
   principal_type       = "ServicePrincipal"
   role_definition_name = each.value.role_definition_name
+  role_definition_id   = each.value.role_definition_id
   scope                = each.value.scope
   condition            = each.value.condition
   condition_version    = each.value.condition != null ? coalesce(each.value.condition_version, "2.0") : null

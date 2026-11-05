@@ -1,0 +1,55 @@
+# Runs in the run command pod, next to manifest.yaml (seed.yaml.tftpl). Bash variables are written as
+# $x, never with braces, which templatefile would interpolate.
+set -euo pipefail
+
+# Run command returns at most 512 kB of logs, so print a command's output only when it fails.
+quiet() {
+  local output
+  if ! output=$("$@" 2>&1); then
+    printf '%s\n' "$output" | tail -n 100
+    return 1
+  fi
+}
+
+# A re-run after Flux took over would downgrade Flux and ExternalSecrets to the upstream charts.
+#
+# Flux took over once the HelmRelease flux exists: the chart installs the CRD, but only
+# the top-level artifact declares that HelmRelease, and Flux fetches the artifact only once every
+# seed object is applied and the acr-pull Secret exists. The CRD check only keeps `kubectl get` from
+# failing before Flux is installed.
+if kubectl get crd helmreleases.helm.toolkit.fluxcd.io >/dev/null 2>&1 &&
+  [ -n "$(kubectl get helmreleases.helm.toolkit.fluxcd.io flux -n flux-system --ignore-not-found -o name)" ]; then
+  echo "Flux already manages this cluster."
+  echo BOOTSTRAP_OK
+  exit 0
+fi
+
+echo "Installing ExternalSecrets"
+quiet helm upgrade --install external-secrets oci://ghcr.io/external-secrets/charts/external-secrets \
+  --version '${external_secrets_chart_version}' \
+  --namespace external-secrets --create-namespace --wait --timeout 10m
+
+echo "Installing Flux"
+quiet helm upgrade --install flux oci://ghcr.io/fluxcd-community/charts/flux2 \
+  --version '${flux_chart_version}' \
+  --namespace flux-system --create-namespace --wait --timeout 10m
+
+quiet kubectl wait --for=condition=Established --timeout=5m \
+  crd/clustersecretstores.external-secrets.io \
+  crd/clusterexternalsecrets.external-secrets.io \
+  crd/externalsecrets.external-secrets.io \
+  crd/ocirepositories.source.toolkit.fluxcd.io \
+  crd/kustomizations.kustomize.toolkit.fluxcd.io
+
+# ExternalSecrets' webhook gets its certificate after its pods are ready, and rejects the seed
+# objects until then. kubectl's default field manager is the one Flux removes on takeover.
+echo "Applying the seed objects"
+for _ in $(seq 30); do
+  if output=$(kubectl apply --server-side -f manifest.yaml 2>&1); then
+    echo BOOTSTRAP_OK
+    exit 0
+  fi
+  sleep 10
+done
+printf '%s\n' "$output" | tail -n 100
+exit 1

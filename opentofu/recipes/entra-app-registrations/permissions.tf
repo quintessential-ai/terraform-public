@@ -10,10 +10,10 @@
 #
 # Delegated permissions are used as the signed-in user, never reaching further than what that
 # user can already see. Stevie's are granted to both Complexio - SSO and Complexio - Backend, and
-# Complexio - Backend also gets those for drafting and sending mail as the user from Stevie. It
-# holds Mail.Send only with stevie_mail_sending_delegated, even when stevie_mail_delegated is on:
-# every Microsoft Graph token it gets for a user carries all of its delegated permissions, so
-# Mail.Send there is what lets Stevie send the drafts it writes.
+# only for reading. Complexio - Backend also gets those for drafting and sending mail as the user
+# from Stevie, and is the only registration that holds Mail.Send: every Microsoft Graph token it
+# gets for a user carries all of its delegated permissions, so Mail.Send there is what lets Stevie
+# send the drafts it writes.
 #
 # Every sign-in also needs openid, profile, email and offline_access to identify the user and keep
 # them signed in, and User.Read to read their profile.
@@ -54,7 +54,6 @@ locals {
   sso_and_backend_delegated_permissions_by_feature = {
     stevie_mail_delegated = {
       "Mail.Read" = "Read the user's mail folders, messages and attachments (GET /me/mailFolders, GET /me/messages)."
-      "Mail.Send" = "Send mail, and send drafts, as the user (POST /me/sendMail, POST /me/messages/{id}/send)."
     }
     stevie_calendar_delegated = {
       "Calendars.Read" = "Read the user's events and check attendees' free/busy times (GET /me/calendarView, POST /me/calendar/getSchedule)."
@@ -97,7 +96,7 @@ locals {
   sso_delegated_permissions = toset(flatten([
     for feature, permissions in local.sso_and_backend_delegated_permissions_by_feature : keys(permissions) if var.features[feature]
   ]))
-  backend_delegated_permissions = setunion(setsubtract(local.sso_delegated_permissions, ["Mail.Send"]), flatten([
+  backend_delegated_permissions = setunion(local.sso_delegated_permissions, flatten([
     for feature, permissions in local.backend_only_delegated_permissions_by_feature : keys(permissions) if var.features[feature]
   ]))
   sign_in_permissions = toset(["openid", "profile", "email", "offline_access", "User.Read"])

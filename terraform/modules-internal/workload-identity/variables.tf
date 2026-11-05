@@ -28,14 +28,20 @@ variable "service_account_name" {
 }
 
 variable "role_assignments" {
-  description = "Azure roles granted to this identity, keyed by a name that is stable at plan time."
+  description = "Azure roles granted to this identity, keyed by a name that is stable at plan time. Name a built-in role by role_definition_name, a custom one by role_definition_id."
   type = map(object({
-    role_definition_name = string
+    role_definition_name = optional(string)
+    role_definition_id   = optional(string)
     scope                = string
     condition            = optional(string)
     condition_version    = optional(string)
   }))
   default = {}
+
+  validation {
+    condition     = alltrue([for a in values(var.role_assignments) : (a.role_definition_name == null) != (a.role_definition_id == null)])
+    error_message = "Each role assignment sets exactly one of role_definition_name and role_definition_id."
+  }
 }
 
 variable "tags" {
