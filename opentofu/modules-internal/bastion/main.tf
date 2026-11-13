@@ -2,6 +2,15 @@
 # private API server on 443. Standard is the lowest SKU with tunneling.
 # https://learn.microsoft.com/en-us/azure/bastion/bastion-connect-to-aks-private-cluster
 
+# The Bastion's subnet, in the VNet's resource group. Azure Bastion requires the name
+# AzureBastionSubnet. The VNet's resource group can differ from the Bastion's.
+resource "azurerm_subnet" "this" {
+  name                 = "AzureBastionSubnet"
+  resource_group_name  = split("/", var.vnet_id)[4]
+  virtual_network_name = split("/", var.vnet_id)[8]
+  address_prefixes     = [var.subnet_cidr]
+}
+
 resource "azurerm_public_ip" "this" {
   name                = var.name
   resource_group_name = var.resource_group_name
@@ -25,7 +34,7 @@ resource "azurerm_bastion_host" "this" {
 
   ip_configuration {
     name                 = "bastion"
-    subnet_id            = var.subnet_id
+    subnet_id            = azurerm_subnet.this.id
     public_ip_address_id = azurerm_public_ip.this.id
   }
 
@@ -99,23 +108,6 @@ resource "azurerm_network_security_group" "nodes" {
     source_port_range          = "*"
     destination_address_prefix = "*"
     destination_port_range     = "*"
-  }
-
-  # This NSG's default rules deny the internet. AKS opens the gateway's public IP only in its own
-  # NSG on the nodes, so without this rule the public LoadBalancer Service is unreachable.
-  dynamic "security_rule" {
-    for_each = var.gateway_public_ip == null ? [] : [var.gateway_public_ip]
-    content {
-      name                       = "allow-internet-to-gateway"
-      priority                   = 200
-      direction                  = "Inbound"
-      access                     = "Allow"
-      protocol                   = "Tcp"
-      source_address_prefix      = "Internet"
-      source_port_range          = "*"
-      destination_address_prefix = security_rule.value.address
-      destination_port_range     = "443"
-    }
   }
 }
 

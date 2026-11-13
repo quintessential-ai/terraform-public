@@ -29,9 +29,14 @@ variable "dns_prefix" {
   default     = null
 }
 
-variable "nodes_subnet_id" {
-  description = "Subnet the core node pool and, by default, Karpenter provision into."
+variable "nodes_subnet_cidr" {
+  description = "Range of the aks-nodes subnet, which the core node pool and, by default, Karpenter provision into. A /24 at least."
   type        = string
+
+  validation {
+    condition     = can(cidrnetmask(var.nodes_subnet_cidr)) && tonumber(split("/", var.nodes_subnet_cidr)[1]) <= 24
+    error_message = "nodes_subnet_cidr must be an IPv4 CIDR of at least a /24."
+  }
 }
 
 variable "private_cluster_enabled" {
@@ -40,45 +45,38 @@ variable "private_cluster_enabled" {
   default     = true
 }
 
-variable "apiserver_subnet_id" {
-  description = "Subnet delegated to AKS for the private API server (API Server VNet Integration)."
+variable "apiserver_subnet_cidr" {
+  description = "Range of the aks-apiserver subnet, delegated to AKS for the private API server (API Server VNet Integration). A /27 at least."
   type        = string
+
+  validation {
+    condition     = can(cidrnetmask(var.apiserver_subnet_cidr)) && tonumber(split("/", var.apiserver_subnet_cidr)[1]) <= 27
+    error_message = "apiserver_subnet_cidr must be an IPv4 CIDR of at least a /27."
+  }
+}
+
+variable "ingress_lb_subnet_cidr" {
+  description = "Range of the aks-ingress-lb subnet, for the gateway's internal load balancer. A /29 at least: Azure reserves five addresses in every subnet, and the gateway takes the fifth."
+  type        = string
+
+  validation {
+    condition     = can(cidrnetmask(var.ingress_lb_subnet_cidr)) && tonumber(split("/", var.ingress_lb_subnet_cidr)[1]) <= 29
+    error_message = "ingress_lb_subnet_cidr must be an IPv4 CIDR of at least a /29."
+  }
 }
 
 variable "vnet_id" {
-  description = "VNet holding nodes_subnet_id. The cluster identity is granted Network Contributor on it."
+  description = "VNet the subnets are created in. The cluster identity is granted Network Contributor on it."
   type        = string
 }
 
-variable "outbound_type" {
-  description = "userAssignedNATGateway: egress leaves through nat_gateway_id. userDefinedRouting: egress follows route_table_id to a network appliance."
+variable "network_appliance_ip" {
+  description = "Private IP of the network appliance that takes all the nodes' egress. It must be reachable before the cluster is created: its nodes need egress to start."
   type        = string
 
   validation {
-    condition     = contains(["userAssignedNATGateway", "userDefinedRouting"], var.outbound_type)
-    error_message = "outbound_type must be userAssignedNATGateway or userDefinedRouting."
-  }
-}
-
-variable "nat_gateway_id" {
-  description = "NAT gateway on nodes_subnet_id. Required with userAssignedNATGateway."
-  type        = string
-  default     = null
-
-  validation {
-    condition     = var.outbound_type != "userAssignedNATGateway" || var.nat_gateway_id != null
-    error_message = "Set nat_gateway_id when outbound_type is userAssignedNATGateway."
-  }
-}
-
-variable "route_table_id" {
-  description = "Route table on nodes_subnet_id that sends egress to a network appliance. Required with userDefinedRouting."
-  type        = string
-  default     = null
-
-  validation {
-    condition     = var.outbound_type != "userDefinedRouting" || var.route_table_id != null
-    error_message = "Set route_table_id when outbound_type is userDefinedRouting."
+    condition     = can(regex("^\\d+\\.\\d+\\.\\d+\\.\\d+$", var.network_appliance_ip)) && can(cidrhost("${var.network_appliance_ip}/32", 0))
+    error_message = "network_appliance_ip must be an IPv4 address: it is the next hop of the route to the internet."
   }
 }
 
@@ -98,6 +96,11 @@ variable "service_cidr" {
 variable "dns_service_ip" {
   type    = string
   default = "172.17.255.254"
+
+  validation {
+    condition     = try(cidrhost("${var.dns_service_ip}/${split("/", var.service_cidr)[1]}", 0) == cidrhost(var.service_cidr, 0), false)
+    error_message = "dns_service_ip must be an address in service_cidr: AKS fails to create the cluster otherwise."
+  }
 }
 
 # --- Core node pool -----------------------------------------------------------------------------
@@ -160,12 +163,6 @@ variable "acr_ids" {
   description = "Container registries the kubelet may pull images from, keyed by a plan-time-stable name."
   type        = map(string)
   default     = {}
-}
-
-variable "create_gateway_public_ip" {
-  description = "Create a static public IP for the gateway's LoadBalancer Service, kept when the Gateway is deleted. Set false when the gateway needs no public access."
-  type        = bool
-  default     = true
 }
 
 variable "tags" {

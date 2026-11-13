@@ -43,25 +43,14 @@ output "nodes_subnet_cidr" {
   value = local.outputs.nodes_subnet_cidr
 }
 
-# Without an existing network appliance: the NAT gateway's IP, the source of all egress.
-output "egress_public_ip_address" {
-  value = local.outputs.egress_public_ip_address
+# The source of all egress and where HTTPS comes in, when Terraform creates the network appliance.
+output "network_appliance_public_ip_address" {
+  value = local.outputs.network_appliance_public_ip_address
 }
 
-# Behind an existing network appliance: the target of its DNAT rule, and the gateway Service's IP.
+# The target of the network appliance's DNAT rule, and the gateway Service's IP.
 output "ingress_lb_private_ip" {
   value = local.outputs.ingress_lb_private_ip
-}
-
-# For the gateway's GatewayParameters: service.beta.kubernetes.io/azure-pip-name and
-# service.beta.kubernetes.io/azure-load-balancer-resource-group.
-
-output "gateway_public_ip_name" {
-  value = local.outputs.gateway_public_ip_name
-}
-
-output "gateway_public_ip_address" {
-  value = local.outputs.gateway_public_ip_address
 }
 
 # The vault the Postgres and the Entra app registrations' credentials are written to.
@@ -97,7 +86,7 @@ output "s3proxy_identity_client_id" {
 }
 
 output "neo4j_backup_identity_client_id" {
-  value = try(module.workload_identity["neo4j-backup"].client_id, null)
+  value = local.outputs.neo4j_backup_identity_client_id
 }
 
 output "postgres_fqdn" {

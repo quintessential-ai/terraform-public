@@ -25,6 +25,17 @@ variable "namespace" {
 variable "service_account_name" {
   description = "The name of the K8S ServiceAccount."
   type        = string
+
+  # The federated credential is named after the identity, and its names take no dots.
+  validation {
+    condition     = !strcontains(var.service_account_name, ".")
+    error_message = "service_account_name must not contain dots: the federated credential named after it can't."
+  }
+
+  validation {
+    condition     = length("${var.name_prefix}-${var.namespace}-${var.service_account_name}") <= 120
+    error_message = "<name_prefix>-<namespace>-<service_account_name> names the federated credential, which takes at most 120 characters."
+  }
 }
 
 variable "role_assignments" {

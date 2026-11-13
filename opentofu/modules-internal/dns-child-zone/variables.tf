@@ -16,7 +16,7 @@ variable "dns_zone" {
   }
 
   validation {
-    condition     = !endswith(var.dns_zone.prefix, var.dns_zone.parent_zone_name)
+    condition     = !(var.dns_zone.prefix == var.dns_zone.parent_zone_name || endswith(var.dns_zone.prefix, ".${var.dns_zone.parent_zone_name}"))
     error_message = "dns_zone.prefix is the part in front of the parent zone, not the full name: use \"acme\", not \"acme.example.com\"."
   }
 }

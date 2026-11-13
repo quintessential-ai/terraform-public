@@ -10,12 +10,29 @@ variable "display_names" {
 variable "browser_hosts" {
   description = "Host names your users open Complexio on, such as \"complexio.example.com\". Sign-in redirects back to these hosts only."
   type        = list(string)
+
+  validation {
+    condition     = length(var.browser_hosts) > 0
+    error_message = "browser_hosts must name at least one host: without a redirect URI, nobody can sign in."
+  }
+
+  # The redirect URIs are https://<host>/<path>.
+  validation {
+    condition     = alltrue([for host in var.browser_hosts : can(regex("^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*(:[0-9]+)?$", host))])
+    error_message = "browser_hosts takes bare host names, without scheme or path: \"complexio.example.com\", not \"https://complexio.example.com/\"."
+  }
 }
 
 variable "mcp_hosts" {
   description = "Host names of Complexio's MCP servers, if you use them. Leave empty otherwise."
   type        = list(string)
   default     = []
+
+  # The redirect URIs are https://<host>/oauth/callback.
+  validation {
+    condition     = alltrue([for host in var.mcp_hosts : can(regex("^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*(:[0-9]+)?$", host))])
+    error_message = "mcp_hosts takes bare host names, without scheme or path: \"mcp.example.com\", not \"https://mcp.example.com/\"."
+  }
 }
 
 variable "features" {
@@ -23,7 +40,9 @@ variable "features" {
     What Complexio may do in your Microsoft 365 tenant. Each switch grants the Microsoft Graph
     permissions that feature needs, and nothing is granted for a switch left off. Switches ending
     in "_delegated" let Stevie act as the signed-in user, limited to what that user can already
-    see. The others let Complexio's services work without a signed-in user.
+    see. The others let Complexio's services work without a signed-in user. The two mail write
+    switches are the exception: the install only asks for them, and an Entra administrator
+    approves them.
   EOT
   type = object({
     email_ingestion                 = optional(bool, true)
@@ -41,14 +60,16 @@ variable "features" {
     stevie_teams_delegated      = optional(bool, true)
     stevie_sharepoint_delegated = optional(bool, true)
 
-    stevie_mail_drafting_delegated = optional(bool, false)
-    stevie_mail_sending_delegated  = optional(bool, false)
+    # Mail write: null (the default) has Complexio - Backend ask for it, and the install keeps it
+    # once an Entra administrator approves it. false neither asks for it nor keeps an approval.
+    stevie_mail_drafting_delegated = optional(bool)
+    stevie_mail_sending_delegated  = optional(bool)
   })
   default = {}
 
   validation {
-    condition     = !var.features.stevie_mail_sending_delegated || var.features.stevie_mail_drafting_delegated
-    error_message = "stevie_mail_sending_delegated needs stevie_mail_drafting_delegated: Stevie sends only drafts it has written. Both default to true, so to turn off drafting also set stevie_mail_sending_delegated = false."
+    condition     = var.features.stevie_mail_drafting_delegated != true && var.features.stevie_mail_sending_delegated != true
+    error_message = "stevie_mail_drafting_delegated and stevie_mail_sending_delegated no longer take true: the install never grants mail write, an Entra administrator approves it. Remove the line (or set it to null) to keep any approval your tenant already holds, or set it to false to remove it."
   }
 }
 
@@ -132,6 +153,11 @@ variable "stevie_departments" {
   description = "Departments to create a Stevie access group for, named \"<prefix>-stevie-<department>\". Only used with create_and_assign_access_groups."
   type        = list(string)
   default     = []
+
+  validation {
+    condition     = length(distinct(var.stevie_departments)) == length(var.stevie_departments)
+    error_message = "stevie_departments must not list a department twice: each gets one access group."
+  }
 }
 
 variable "tags" {

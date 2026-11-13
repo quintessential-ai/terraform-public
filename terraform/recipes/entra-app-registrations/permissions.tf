@@ -10,10 +10,11 @@
 #
 # Delegated permissions are used as the signed-in user, never reaching further than what that
 # user can already see. Stevie's are granted to both Complexio - SSO and Complexio - Backend, and
-# only for reading. Complexio - Backend also gets those for drafting and sending mail as the user
-# from Stevie, and is the only registration that holds Mail.Send: every Microsoft Graph token it
-# gets for a user carries all of its delegated permissions, so Mail.Send there is what lets Stevie
-# send the drafts it writes.
+# only for reading. Complexio - Backend also asks for those for drafting and sending mail as the
+# user from Stevie, but the install never grants them: an Entra administrator approves them, and
+# the install keeps that approval. It is the only registration that can hold Mail.Send: every
+# Microsoft Graph token it gets for a user carries all of its delegated permissions, so Mail.Send
+# there is what lets Stevie send the drafts it writes.
 #
 # Every sign-in also needs openid, profile, email and offline_access to identify the user and keep
 # them signed in, and User.Read to read their profile.
@@ -81,7 +82,9 @@ locals {
     }
   }
 
-  backend_only_delegated_permissions_by_feature = {
+  # Complexio - Backend asks for these, and an Entra administrator approves them: the install never
+  # grants them, and keeps an approval unless the switch is false.
+  mail_write_delegated_permissions_by_feature = {
     stevie_mail_drafting_delegated = {
       "Mail.ReadWrite" = "Create reply and forward drafts, and edit them, as the user (POST /me/messages/{id}/createReply, PATCH /me/messages/{id})."
     }
@@ -91,15 +94,15 @@ locals {
   }
 
   application_permissions = setunion(var.additional_application_permissions, flatten([
-    for feature, permissions in local.application_permissions_by_feature : keys(permissions) if var.features[feature]
+    for feature, permissions in local.application_permissions_by_feature : keys(permissions) if var.features[feature] == true
   ]))
   sso_delegated_permissions = toset(flatten([
-    for feature, permissions in local.sso_and_backend_delegated_permissions_by_feature : keys(permissions) if var.features[feature]
+    for feature, permissions in local.sso_and_backend_delegated_permissions_by_feature : keys(permissions) if var.features[feature] == true
   ]))
-  backend_delegated_permissions = setunion(local.sso_delegated_permissions, flatten([
-    for feature, permissions in local.backend_only_delegated_permissions_by_feature : keys(permissions) if var.features[feature]
-  ]))
-  sign_in_permissions = toset(["openid", "profile", "email", "offline_access", "User.Read"])
+  # The install grants Complexio - Backend no more than Complexio - SSO: mail write is approved
+  # in Entra.
+  backend_delegated_permissions = local.sso_delegated_permissions
+  sign_in_permissions           = toset(["openid", "profile", "email", "offline_access", "User.Read"])
 
   graph_role_ids  = data.azuread_service_principal.msgraph.app_role_ids
   graph_scope_ids = data.azuread_service_principal.msgraph.oauth2_permission_scope_ids
@@ -110,4 +113,18 @@ locals {
   known_sso_delegated_permissions     = setsubtract(local.sso_delegated_permissions, local.unknown_delegated_permissions)
   known_backend_delegated_permissions = setsubtract(local.backend_delegated_permissions, local.unknown_delegated_permissions)
   known_sign_in_permissions           = setsubtract(local.sign_in_permissions, local.unknown_delegated_permissions)
+
+  # Mail write left to an Entra administrator (switch null): Complexio - Backend asks for it, so
+  # Entra's "Grant admin consent" approves it, and the grant keeps whatever of it is approved.
+  # Sending is never kept once drafting is switched off: Stevie sends only drafts it wrote. With
+  # every Stevie permission off there is no grant to keep it in, so null then acts as false.
+  mail_write_switches = {
+    stevie_mail_drafting_delegated = var.features.stevie_mail_drafting_delegated
+    stevie_mail_sending_delegated  = var.features.stevie_mail_drafting_delegated == false ? false : var.features.stevie_mail_sending_delegated
+  }
+  mail_write_permissions = toset(flatten([for permissions in values(local.mail_write_delegated_permissions_by_feature) : keys(permissions)]))
+  approvable_mail_write = length(local.known_backend_delegated_permissions) == 0 ? toset([]) : setintersection(flatten([
+    for feature, permissions in local.mail_write_delegated_permissions_by_feature : keys(permissions) if local.mail_write_switches[feature] == null
+  ]), keys(local.graph_scope_ids))
+  backend_requested_delegated_permissions = setunion(local.known_backend_delegated_permissions, local.approvable_mail_write)
 }

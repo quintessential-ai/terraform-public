@@ -5,6 +5,67 @@ data "azurerm_client_config" "current" {}
 locals {
   dns_prefix = coalesce(var.dns_prefix, var.resource_group_name)
   tenant_id  = coalesce(var.tenant_id, data.azurerm_client_config.current.tenant_id)
+  # The VNet's resource group and name, read from its ID. The subnets go in that resource group,
+  # which can differ from the cluster's.
+  vnet_resource_group_name = split("/", var.vnet_id)[4]
+  vnet_name                = split("/", var.vnet_id)[8]
+}
+
+# --- Subnets ------------------------------------------------------------------------------------
+
+# The subnet names are fixed. Renaming a subnet replaces it, with everything inside it.
+resource "azurerm_subnet" "nodes" {
+  name                 = "aks-nodes"
+  resource_group_name  = local.vnet_resource_group_name
+  virtual_network_name = local.vnet_name
+  address_prefixes     = [var.nodes_subnet_cidr]
+}
+
+# Holds the private API server's load balancer and instances.
+# https://learn.microsoft.com/en-us/azure/aks/api-server-vnet-integration
+resource "azurerm_subnet" "apiserver" {
+  name                 = "aks-apiserver"
+  resource_group_name  = local.vnet_resource_group_name
+  virtual_network_name = local.vnet_name
+  address_prefixes     = [var.apiserver_subnet_cidr]
+
+  delegation {
+    name = "aks"
+    service_delegation {
+      name    = "Microsoft.ContainerService/managedClusters"
+      actions = ["Microsoft.Network/virtualNetworks/subnets/join/action"]
+    }
+  }
+}
+
+# The subnet of the gateway's internal load balancer, the network appliance's ingress target.
+# It is separate from the nodes subnet. This way, a scaling node pool can't take the gateway's fixed IP.
+resource "azurerm_subnet" "ingress_lb" {
+  name                 = "aks-ingress-lb"
+  resource_group_name  = local.vnet_resource_group_name
+  virtual_network_name = local.vnet_name
+  address_prefixes     = [var.ingress_lb_subnet_cidr]
+}
+
+# Sends all egress from the nodes to the network appliance. AKS checks this route when it creates a
+# cluster with userDefinedRouting, which only takes an appliance or a VNet gateway as its next hop.
+resource "azurerm_route_table" "egress" {
+  name                = "${local.vnet_name}-egress"
+  resource_group_name = var.resource_group_name
+  location            = var.region
+  tags                = var.tags
+
+  route {
+    name                   = "default-to-network-appliance"
+    address_prefix         = "0.0.0.0/0"
+    next_hop_type          = "VirtualAppliance"
+    next_hop_in_ip_address = var.network_appliance_ip
+  }
+}
+
+resource "azurerm_subnet_route_table_association" "nodes" {
+  subnet_id      = azurerm_subnet.nodes.id
+  route_table_id = azurerm_route_table.egress.id
 }
 
 # --- Cluster identity ---------------------------------------------------------------------------
@@ -28,20 +89,10 @@ resource "azurerm_role_assignment" "network_contributor" {
 
 # AKS checks the route table's default route when it creates the cluster.
 resource "azurerm_role_assignment" "route_table" {
-  count                = var.outbound_type == "userDefinedRouting" ? 1 : 0
   principal_id         = azurerm_user_assigned_identity.cluster.principal_id
   principal_type       = "ServicePrincipal"
   role_definition_name = "Network Contributor"
-  scope                = var.route_table_id
-}
-
-# AKS checks the NAT gateway when it creates the cluster.
-resource "azurerm_role_assignment" "nat_gateway" {
-  count                = var.outbound_type == "userAssignedNATGateway" ? 1 : 0
-  principal_id         = azurerm_user_assigned_identity.cluster.principal_id
-  principal_type       = "ServicePrincipal"
-  role_definition_name = "Network Contributor"
-  scope                = var.nat_gateway_id
+  scope                = azurerm_route_table.egress.id
 }
 
 # --- Cluster ------------------------------------------------------------------------------------
@@ -64,7 +115,7 @@ resource "azurerm_kubernetes_cluster" "this" {
   # gets a public endpoint. https://learn.microsoft.com/en-us/azure/aks/api-server-vnet-integration
   private_cluster_enabled = var.private_cluster_enabled
   api_server_access_profile {
-    subnet_id                           = var.apiserver_subnet_id
+    subnet_id                           = azurerm_subnet.apiserver.id
     virtual_network_integration_enabled = true
   }
 
@@ -95,7 +146,7 @@ resource "azurerm_kubernetes_cluster" "this" {
     scale_down_mode        = "Delete"
     # Also the subnet Karpenter provisions into by default.
     # https://learn.microsoft.com/en-us/azure/aks/node-autoprovision-networking#default-subnet-behavior
-    vnet_subnet_id = var.nodes_subnet_id
+    vnet_subnet_id = azurerm_subnet.nodes.id
     tags           = var.tags
 
     upgrade_settings {
@@ -130,10 +181,10 @@ resource "azurerm_kubernetes_cluster" "this" {
     network_data_plane = "cilium"
     network_policy     = "cilium"
     load_balancer_sku  = "standard"
-    # Egress leaves through the NAT gateway on the nodes subnet, or follows its route table to a
-    # network appliance. AKS creates no outbound public IP, and can switch between the two in place.
+    # Egress follows the nodes subnet's route table to a network appliance, and AKS creates no
+    # outbound public IP. With node auto-provisioning, AKS can't change the outbound type later.
     # https://learn.microsoft.com/en-us/azure/aks/egress-outboundtype
-    outbound_type  = var.outbound_type
+    outbound_type  = "userDefinedRouting"
     pod_cidr       = var.pod_cidr
     service_cidr   = var.service_cidr
     dns_service_ip = var.dns_service_ip
@@ -141,10 +192,14 @@ resource "azurerm_kubernetes_cluster" "this" {
 
   tags = var.tags
 
+  # The cluster is created after the nodes subnet's route table association and the ingress subnet.
+  # AKS checks the route when it creates the cluster.
+  # On destroy, the cluster goes first. Its load balancer holds an IP in the ingress subnet.
   depends_on = [
     azurerm_role_assignment.network_contributor,
     azurerm_role_assignment.route_table,
-    azurerm_role_assignment.nat_gateway,
+    azurerm_subnet_route_table_association.nodes,
+    azurerm_subnet.ingress_lb,
   ]
 }
 
@@ -155,42 +210,10 @@ resource "azurerm_kubernetes_cluster" "this" {
 resource "azurerm_role_assignment" "acr_pull" {
   for_each = var.acr_ids
 
-  principal_id         = azurerm_kubernetes_cluster.this.kubelet_identity[0].object_id
+  principal_id         = one(azurerm_kubernetes_cluster.this.kubelet_identity[*].object_id)
   principal_type       = "ServicePrincipal"
   role_definition_name = "AcrPull"
   scope                = each.value
-}
-
-# --- Gateway public IP --------------------------------------------------------------------------
-
-# The gateway's LoadBalancer Service borrows this IP through the azure-pip-name annotation rather
-# than letting AKS create one in the node resource group. An AKS-created IP is deleted with its
-# Service, so a recreated Gateway would come back on a new address and break DNS.
-# https://learn.microsoft.com/en-us/azure/aks/static-ip
-resource "azurerm_public_ip" "gateway" {
-  count               = var.create_gateway_public_ip ? 1 : 0
-  name                = "${var.cluster_name}-gateway"
-  resource_group_name = var.resource_group_name
-  location            = var.region
-  sku                 = "Standard"
-  allocation_method   = "Static"
-  zones               = var.availability_zones
-  tags                = var.tags
-
-  # Off while we test apply/destroy. Uncomment for customer clusters, or terraform destroy deletes the IP.
-  # lifecycle {
-  #   prevent_destroy = true
-  # }
-}
-
-# AKS can only use resources in its own node resource group (MC_...) by default. This IP lives
-# outside it, so the cluster needs Network Contributor here to attach the IP to its load balancer.
-resource "azurerm_role_assignment" "gateway_public_ip" {
-  count                = var.create_gateway_public_ip ? 1 : 0
-  principal_id         = azurerm_user_assigned_identity.cluster.principal_id
-  principal_type       = "ServicePrincipal"
-  role_definition_name = "Network Contributor"
-  scope                = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/resourceGroups/${var.resource_group_name}"
 }
 
 # --- Azure Container Storage --------------------------------------------------------------------

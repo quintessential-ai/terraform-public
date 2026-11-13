@@ -12,6 +12,12 @@ provider "azuread" {
   tenant_id = var.tenant_id
 }
 
+# Reads Complexio - Backend's Microsoft Graph grant, which the azuread provider cannot, to keep the
+# mail write an Entra administrator approved. Signs in like azuread.
+provider "msgraph" {
+  tenant_id = var.tenant_id
+}
+
 provider "azurerm" {
   subscription_id = var.subscription_id
   features {}

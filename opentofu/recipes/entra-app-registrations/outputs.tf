@@ -57,8 +57,13 @@ output "sso_delegated_permissions" {
 }
 
 output "backend_delegated_permissions" {
-  description = "Microsoft Graph delegated permissions granted to Complexio - Backend."
+  description = "Microsoft Graph delegated permissions the install grants Complexio - Backend. Mail write an Entra administrator approved is kept besides these."
   value       = sort(local.known_backend_delegated_permissions)
+}
+
+output "backend_requested_delegated_permissions" {
+  description = "Microsoft Graph delegated permissions Complexio - Backend asks for: those granted above, plus the mail write left to an Entra administrator to approve."
+  value       = sort(local.backend_requested_delegated_permissions)
 }
 
 output "teams_app_package" {
@@ -75,7 +80,7 @@ output "mailbox_administrative_unit_id" {
 }
 
 output "exchange_mailbox_access_commands" {
-  description = "Exchange Online PowerShell that grants Complexio - Backend mailbox access, limited to the \"Complexio mailboxes\" administrative unit. Run it once as an Exchange Administrator; Complexio can't read or send mail until you do."
+  description = "Exchange Online PowerShell that grants Complexio - Backend mailbox access, limited to the \"Complexio mailboxes\" administrative unit. Run it once as an Exchange Administrator; Complexio can't reach the mailboxes you choose until you do."
   value = length(local.exchange_mail_roles) == 0 ? null : join("\n", concat(
     [
       "# Requires the ExchangeOnlineManagement module: Install-Module ExchangeOnlineManagement",

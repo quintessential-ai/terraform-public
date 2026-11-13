@@ -20,7 +20,7 @@ output "principal_id" {
 }
 
 output "kubelet_identity_object_id" {
-  value = azurerm_kubernetes_cluster.this.kubelet_identity[0].object_id
+  value = one(azurerm_kubernetes_cluster.this.kubelet_identity[*].object_id)
 }
 
 output "private_fqdn" {
@@ -37,13 +37,10 @@ output "role_assignment_ids" {
   value       = [for a in azurerm_role_assignment.this : a.id]
 }
 
-# For the gateway's GatewayParameters: service.beta.kubernetes.io/azure-pip-name and
-# service.beta.kubernetes.io/azure-load-balancer-resource-group.
-
-output "gateway_public_ip_name" {
-  value = try(azurerm_public_ip.gateway[0].name, null)
+output "nodes_subnet_id" {
+  value = azurerm_subnet.nodes.id
 }
 
-output "gateway_public_ip_address" {
-  value = try(azurerm_public_ip.gateway[0].ip_address, null)
+output "apiserver_subnet_id" {
+  value = azurerm_subnet.apiserver.id
 }

@@ -2,6 +2,9 @@ data "azurerm_client_config" "current" {}
 
 locals {
   subscription_id = data.azurerm_client_config.current.subscription_id
+  # The cluster name, for the generated Key Vault and PostgreSQL server names: AKS takes underscores,
+  # they don't. A name without them stays as it is, so existing resources keep theirs.
+  cluster_name_in_names = replace(var.cluster_name, "/[^a-zA-Z0-9-]+/", "-")
 }
 
 # --- Resource group -----------------------------------------------------------------------------
@@ -26,6 +29,40 @@ locals {
 
 # --- Networking ---------------------------------------------------------------------------------
 
+# The range of every subnet. Each module creates its own subnet from its range.
+# In a new VNet, each subnet takes a fixed /24 block of vnet_cidr. The block is reserved even when its
+# component is disabled. This keeps the other ranges stable when a component is enabled or disabled.
+# Changing a range replaces the subnet, with everything inside it.
+# An existing VNet takes every range from the *_subnet_cidr variables.
+locals {
+  subnet_blocks = {
+    nodes             = 0
+    apiserver         = 1
+    bastion           = 2
+    postgres          = 3
+    blob_storage      = 4
+    ingress_lb        = 5
+    network_appliance = 6
+  }
+  explicit_subnet_cidrs = {
+    nodes             = var.nodes_subnet_cidr
+    apiserver         = var.apiserver_subnet_cidr
+    bastion           = var.bastion_subnet_cidr
+    postgres          = var.postgres_subnet_cidr
+    blob_storage      = var.blob_storage_subnet_cidr
+    ingress_lb        = var.ingress_lb_subnet_cidr
+    network_appliance = var.network_appliance_subnet_cidr
+  }
+  # An explicit range wins over the derived one. With an existing VNet, nothing is derived.
+  # This is a ternary, not coalesce(): coalesce() evaluates every argument. With an existing VNet,
+  # cidrsubnet() would then fail on a vnet_cidr that the recipe ignores.
+  subnet_cidrs = { for name, block in local.subnet_blocks :
+    name => local.explicit_subnet_cidrs[name] != null ? local.explicit_subnet_cidrs[name] : (
+      var.existing_vnet_name == null ? cidrsubnet(var.vnet_cidr, 8, block) : null
+    )
+  }
+}
+
 module "network" {
   source = "../../modules-internal/network"
 
@@ -41,28 +78,88 @@ module "network" {
   existing_vnet_name                = var.existing_vnet_name
   existing_vnet_resource_group_name = var.existing_vnet_resource_group_name
   vnet_cidr                         = var.vnet_cidr
-  nodes_subnet_cidr                 = var.nodes_subnet_cidr
-  apiserver_subnet_cidr             = var.apiserver_subnet_cidr
-  bastion_subnet_cidr               = var.bastion_subnet_cidr
-  ingress_lb_subnet_cidr            = var.ingress_lb_subnet_cidr
   peerings                          = var.vnet_peerings
-  create_bastion_subnet             = var.create_bastion
-  route_egress_to_network_appliance = var.use_existing_network_appliance
-  network_appliance_ip              = var.use_existing_network_appliance ? var.existing_network_appliance_private_ip : null
-  network_appliance_vnet_id         = var.use_existing_network_appliance ? var.existing_network_appliance_vnet_id : null
+  network_appliance_ip              = local.network_appliance_ip
+  network_appliance_vnet_id         = var.network_appliance == "existing" ? var.existing_network_appliance_vnet_id : null
 
   tags = var.tags
 }
 
-# --- Cluster ------------------------------------------------------------------------------------
+# --- Access -------------------------------------------------------------------------------------
+
+# admin_groups get every admin role. The other variables add groups on top.
+locals {
+  cluster_admin_principal_ids      = distinct(concat(var.admin_groups, var.azure_rbac.cluster_admin_principal_ids))
+  key_vault_secrets_officer_groups = distinct(concat(var.admin_groups, var.key_vault_secrets_officer_groups))
+}
+
+# --- Network appliance --------------------------------------------------------------------------
 
 locals {
-  # Fixed so the existing network appliance's DNAT rule and the gateway's Service agree on it. Azure
-  # reserves the first four addresses of every subnet.
-  ingress_lb_private_ip = var.use_existing_network_appliance ? cidrhost(module.network.ingress_lb_subnet_cidr, 4) : null
-  # Behind an existing network appliance the gateway has only a private IP.
-  create_gateway_public_ip = var.create_gateway_public_ip && !var.use_existing_network_appliance
+  # Fixed so the network appliance's DNAT rule and the gateway's Service agree on it. Azure reserves
+  # the first four addresses of every subnet.
+  ingress_lb_private_ip = cidrhost(local.subnet_cidrs.ingress_lb, 4)
+
+  # The appliances Terraform creates share one range: the firewall takes the first half, the scale
+  # set the second. Switching from one to the other creates the new one without overlapping the old.
+  network_appliance_subnet_cidrs = var.network_appliance == "existing" ? null : {
+    azure_firewall = cidrsubnet(local.subnet_cidrs.network_appliance, 1, 0)
+    vm_scale_set   = cidrsubnet(local.subnet_cidrs.network_appliance, 1, 1)
+  }
+
+  # The cluster name, trimmed for the appliance's resource names: a firewall's name takes at most 56
+  # characters, a scale set's 64.
+  network_appliance_name_prefix = trimsuffix(substr(local.cluster_name_in_names, 0, 40), "-")
 }
+
+module "network_virtual_appliance" {
+  source = "../../modules-internal/network-virtual-appliance"
+  count  = var.network_appliance == "vm_scale_set" ? 1 : 0
+
+  name                = "${local.network_appliance_name_prefix}-network-appliance"
+  resource_group_name = local.resource_group_name
+  region              = var.region
+  vnet_id             = module.network.vnet_id
+  subnet_cidr         = local.network_appliance_subnet_cidrs.vm_scale_set
+  ingress_target_ip   = local.ingress_lb_private_ip
+  availability_zones  = var.availability_zones
+
+  tags = var.tags
+}
+
+module "azure_firewall" {
+  source = "../../modules-internal/azure-firewall"
+  count  = var.network_appliance == "azure_firewall" ? 1 : 0
+
+  name                = "${local.network_appliance_name_prefix}-firewall"
+  resource_group_name = local.resource_group_name
+  region              = var.region
+  vnet_id             = module.network.vnet_id
+  subnet_cidr         = local.network_appliance_subnet_cidrs.azure_firewall
+  egress_source_cidrs = [local.subnet_cidrs.nodes]
+  ingress_target_ip   = local.ingress_lb_private_ip
+  availability_zones  = var.availability_zones
+
+  tags = var.tags
+}
+
+locals {
+  network_appliance_ip = {
+    vm_scale_set   = one(module.network_virtual_appliance[*].private_ip)
+    azure_firewall = one(module.azure_firewall[*].private_ip)
+    existing       = var.existing_network_appliance_private_ip
+  }[var.network_appliance]
+
+  # The address of the network appliance Terraform creates: the source of all egress and where
+  # HTTPS comes in. The customer's own appliance has its own.
+  network_appliance_public_ip_address = {
+    vm_scale_set   = one(module.network_virtual_appliance[*].public_ip_address)
+    azure_firewall = one(module.azure_firewall[*].public_ip_address)
+    existing       = null
+  }[var.network_appliance]
+}
+
+# --- Cluster ------------------------------------------------------------------------------------
 
 locals {
   acr_id_prefix = "/providers/Microsoft.ContainerRegistry/registries"
@@ -86,16 +183,17 @@ module "cluster" {
 
   private_cluster_enabled = var.private_cluster_enabled
 
-  nodes_subnet_id     = module.network.nodes_subnet_id
-  apiserver_subnet_id = module.network.apiserver_subnet_id
-  vnet_id             = module.network.vnet_id
+  vnet_id                = module.network.vnet_id
+  nodes_subnet_cidr      = local.subnet_cidrs.nodes
+  apiserver_subnet_cidr  = local.subnet_cidrs.apiserver
+  ingress_lb_subnet_cidr = local.subnet_cidrs.ingress_lb
 
   availability_zones        = var.availability_zones
   core_pool_vm_size         = var.core_worker_pool_vm_size
   core_pool_os_disk_size_gb = var.core_worker_pool_os_disk_size
 
   principal_ids = {
-    cluster_admin = var.azure_rbac.cluster_admin_principal_ids
+    cluster_admin = local.cluster_admin_principal_ids
     admin         = var.azure_rbac.admin_principal_ids
     writer        = var.azure_rbac.writer_principal_ids
     reader        = var.azure_rbac.reader_principal_ids
@@ -103,10 +201,7 @@ module "cluster" {
   node_provisioning_mode         = var.node_provisioning_mode
   enable_azure_container_storage = var.enable_azure_container_storage
   acr_ids                        = local.docker_acr_ids
-  create_gateway_public_ip       = local.create_gateway_public_ip
-  outbound_type                  = var.use_existing_network_appliance ? "userDefinedRouting" : "userAssignedNATGateway"
-  nat_gateway_id                 = module.network.nat_gateway_id
-  route_table_id                 = module.network.route_table_id
+  network_appliance_ip           = module.network.network_appliance_ip
 
   tags = var.tags
 }
@@ -120,16 +215,15 @@ module "bastion" {
   name                = "${var.cluster_name}-bastion"
   resource_group_name = local.resource_group_name
   region              = var.region
-  subnet_id           = module.network.bastion_subnet_id
-  subnet_cidr         = module.network.bastion_subnet_cidr
+  vnet_id             = module.network.vnet_id
+  subnet_cidr         = local.subnet_cidrs.bastion
 
-  apiserver_subnet_id   = module.network.apiserver_subnet_id
-  apiserver_subnet_cidr = module.network.apiserver_subnet_cidr
-  nodes_subnet_id       = module.network.nodes_subnet_id
-  gateway_public_ip     = local.create_gateway_public_ip ? { address = module.cluster.gateway_public_ip_address } : null
+  apiserver_subnet_id   = module.cluster.apiserver_subnet_id
+  apiserver_subnet_cidr = local.subnet_cidrs.apiserver
+  nodes_subnet_id       = module.cluster.nodes_subnet_id
 
   # Only cluster admins may tunnel in.
-  tunnel_principal_ids = var.azure_rbac.cluster_admin_principal_ids
+  tunnel_principal_ids = local.cluster_admin_principal_ids
 
   tags = var.tags
 }
@@ -151,7 +245,7 @@ resource "random_string" "key_vault_suffix" {
 resource "azurerm_key_vault" "this" {
   # Ensure the Key Vault name does not exceed 24 characters, as required by Azure. When the name is directly set, we already have a
   # variable validation. When it's autogenerated, it enforces the prefix is short enough to keep the total length within 24 characters.
-  name                       = coalesce(var.azure_key_vault_name, "${trimsuffix(substr(var.cluster_name, 0, 15), "-")}-${random_string.key_vault_suffix.result}")
+  name                       = coalesce(var.azure_key_vault_name, "${trimsuffix(substr(local.cluster_name_in_names, 0, 15), "-")}-${random_string.key_vault_suffix.result}")
   resource_group_name        = local.resource_group_name
   location                   = var.region
   tenant_id                  = data.azurerm_client_config.current.tenant_id
@@ -167,7 +261,7 @@ resource "azurerm_key_vault" "this" {
 
 resource "azurerm_role_assignment" "key_vault_admins" {
   # Keyed as before the vault became unconditional, so existing assignments keep their addresses.
-  for_each = { for id in var.azure_rbac.cluster_admin_principal_ids : "${id}-Key Vault Administrator" => id }
+  for_each = { for id in local.cluster_admin_principal_ids : "${id}-Key Vault Administrator" => id }
 
   principal_id         = each.value
   principal_type       = "Group"
@@ -181,7 +275,7 @@ resource "azurerm_role_assignment" "key_vault_admins" {
 # certificates. The grants target fixed principals rather than the caller's identity, so we get the
 # same result regardless of who applied last.
 resource "azurerm_role_assignment" "key_vault_secrets_officers" {
-  for_each = toset(var.key_vault_secrets_officer_groups)
+  for_each = toset(local.key_vault_secrets_officer_groups)
 
   principal_id         = each.value
   role_definition_name = "Key Vault Secrets Officer"
@@ -189,7 +283,7 @@ resource "azurerm_role_assignment" "key_vault_secrets_officers" {
 }
 
 resource "azurerm_role_assignment" "key_vault_certificates_officers" {
-  for_each = toset(var.key_vault_secrets_officer_groups)
+  for_each = toset(local.key_vault_secrets_officer_groups)
 
   principal_id         = each.value
   role_definition_name = "Key Vault Certificates Officer"
@@ -223,12 +317,12 @@ module "postgres" {
 
   # Server names are lowercase and at most 63 characters. A set name is checked by the variable's
   # validation; a generated one trims the cluster name so the whole stays within the limit.
-  name                = coalesce(var.postgres_name, "${trimsuffix(substr(lower(var.cluster_name), 0, 51), "-")}-pg-${random_string.postgres_suffix[0].result}")
+  name                = coalesce(var.postgres_name, "${trimsuffix(substr(lower(local.cluster_name_in_names), 0, 51), "-")}-pg-${random_string.postgres_suffix[0].result}")
   resource_group_name = local.resource_group_name
   region              = var.region
 
   vnet_id                      = module.network.vnet_id
-  subnet_cidr                  = var.postgres_subnet_cidr != null ? var.postgres_subnet_cidr : cidrsubnet(module.network.vnet_cidr, module.network.subnet_newbits, 3)
+  subnet_cidr                  = local.subnet_cidrs.postgres
   existing_private_dns_zone_id = var.postgres_existing_private_dns_zone_id
 
   postgres_version = var.postgres_version
@@ -282,7 +376,7 @@ module "blob_storage" {
   region              = var.region
 
   vnet_id                      = module.network.vnet_id
-  subnet_cidr                  = var.blob_storage_subnet_cidr != null ? var.blob_storage_subnet_cidr : cidrsubnet(module.network.vnet_cidr, module.network.subnet_newbits, 4)
+  subnet_cidr                  = local.subnet_cidrs.blob_storage
   existing_private_dns_zone_id = var.blob_storage_existing_private_dns_zone_id
 
   replication_type           = var.blob_storage_replication_type
@@ -436,6 +530,13 @@ locals {
 
   # Vault names are case-insensitive, and the bootstrap module takes the lowercase URL.
   external_key_vault_url = "https://${lower(var.external_key_vault.name)}.vault.azure.net/"
+  # The bootstrap's seed reads the Terraform inputs and outputs from it. The vault name, and so its
+  # URI, keeps the cluster name's case; the bootstrap takes a lowercase URL.
+  customer_key_vault = {
+    tenant_id                  = data.azurerm_client_config.current.tenant_id
+    external_secrets_client_id = module.workload_identity["external-secrets"].client_id
+    key_vault_url              = lower(azurerm_key_vault.this.vault_uri)
+  }
 
   oci_source_artifact_url  = "oci://complexio.azurecr.io/deployments/${var.customer_name}"
   oci_source_artifact_tag  = "latest"
@@ -457,11 +558,7 @@ module "bootstrap" {
     external_secrets_client_id = var.external_key_vault.external_secrets_client_id
     key_vault_url              = local.external_key_vault_url
   }
-  customer_key_vault = {
-    tenant_id                  = data.azurerm_client_config.current.tenant_id
-    external_secrets_client_id = module.workload_identity["external-secrets"].client_id
-    key_vault_url              = lower(azurerm_key_vault.this.vault_uri)
-  }
+  customer_key_vault = local.customer_key_vault
   oci_source_artifact = {
     url = local.oci_source_artifact_url
     ref = {
@@ -499,14 +596,15 @@ locals {
     apiserver_subnet_cidr                      = var.apiserver_subnet_cidr
     bastion_subnet_cidr                        = var.bastion_subnet_cidr
     ingress_lb_subnet_cidr                     = var.ingress_lb_subnet_cidr
+    network_appliance_subnet_cidr              = var.network_appliance_subnet_cidr
     vnet_peerings                              = var.vnet_peerings
     private_cluster_enabled                    = var.private_cluster_enabled
     create_bastion                             = var.create_bastion
-    create_gateway_public_ip                   = var.create_gateway_public_ip
-    use_existing_network_appliance             = var.use_existing_network_appliance
+    network_appliance                          = var.network_appliance
     existing_network_appliance_private_ip      = var.existing_network_appliance_private_ip
     existing_network_appliance_vnet_id         = var.existing_network_appliance_vnet_id
     azure_rbac                                 = var.azure_rbac
+    admin_groups                               = var.admin_groups
     docker_acr_registries                      = var.docker_acr_registries
     generic_acr_registries                     = var.generic_acr_registries
     k8s_namespaces                             = var.k8s_namespaces
@@ -554,11 +652,9 @@ locals {
     bastion_name                         = try(module.bastion[0].name, null)
     node_resource_group                  = module.cluster.node_resource_group
     vnet_id                              = module.network.vnet_id
-    nodes_subnet_cidr                    = module.network.nodes_subnet_cidr
-    egress_public_ip_address             = module.network.egress_public_ip_address
+    nodes_subnet_cidr                    = local.subnet_cidrs.nodes
+    network_appliance_public_ip_address  = local.network_appliance_public_ip_address
     ingress_lb_private_ip                = local.ingress_lb_private_ip
-    gateway_public_ip_name               = module.cluster.gateway_public_ip_name
-    gateway_public_ip_address            = module.cluster.gateway_public_ip_address
     key_vault_id                         = azurerm_key_vault.this.id
     key_vault_name                       = azurerm_key_vault.this.name
     external_secrets_identity_client_id  = module.workload_identity["external-secrets"].client_id
@@ -566,6 +662,7 @@ locals {
     external_dns_identity_client_id      = try(module.workload_identity["external-dns"].client_id, null)
     cert_manager_identity_client_id      = try(module.workload_identity["cert-manager"].client_id, null)
     s3proxy_identity_client_id           = try(module.workload_identity["s3proxy"].client_id, null)
+    neo4j_backup_identity_client_id      = try(module.workload_identity["neo4j-backup"].client_id, null)
     postgres_fqdn                        = try(module.postgres[0].fqdn, null)
     blob_storage_account_name            = try(module.blob_storage[0].name, null)
     blob_storage_container_names         = try(module.blob_storage[0].container_names, null)

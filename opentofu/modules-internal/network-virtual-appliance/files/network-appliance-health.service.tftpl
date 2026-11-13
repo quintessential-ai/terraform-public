@@ -1,0 +1,14 @@
+[Unit]
+Description=Health endpoint the network appliance's load balancers probe
+Requires=nftables.service
+After=nftables.service
+
+[Service]
+# Healthy only once the instance forwards.
+ExecStartPre=/bin/sh -c 'test "$(cat /proc/sys/net/ipv4/ip_forward)" = 1'
+ExecStart=/usr/local/bin/network-appliance-health ${port}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

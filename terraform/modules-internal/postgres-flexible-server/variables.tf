@@ -68,10 +68,16 @@ variable "postgres_version" {
 }
 
 variable "sku_name" {
-  description = "Prefixed with the tier: MO_ (memory optimized), GP_ (general purpose) or B_ (burstable)."
+  description = "A memory optimized E (MO_Standard_E<vCPUs>...) or general purpose D (GP_Standard_D<vCPUs>...) SKU."
   type        = string
   default     = "MO_Standard_E16ds_v5"
   nullable    = false
+
+  # The server parameters are sized from the memory per vCPU of these two families.
+  validation {
+    condition     = can(regex("^(MO_Standard_E|GP_Standard_D)\\d+[a-z]*_v\\d+$", var.sku_name))
+    error_message = "sku_name must be a memory optimized E or general purpose D SKU, with its tier prefix, e.g. MO_Standard_E16ds_v5 or GP_Standard_D4ds_v5."
+  }
 }
 
 variable "zone" {

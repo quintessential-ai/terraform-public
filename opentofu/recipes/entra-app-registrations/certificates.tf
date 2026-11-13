@@ -52,6 +52,6 @@ resource "azuread_application_certificate" "this" {
   type           = "AsymmetricX509Cert"
   encoding       = "hex"
   value          = each.value.certificate_data
-  start_date     = each.value.certificate_attribute[0].not_before
-  end_date       = each.value.certificate_attribute[0].expires
+  start_date     = one(each.value.certificate_attribute[*].not_before)
+  end_date       = one(each.value.certificate_attribute[*].expires)
 }

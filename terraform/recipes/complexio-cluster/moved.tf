@@ -30,3 +30,38 @@ moved {
   from = module.workload_identity["external-secrets"].azurerm_role_assignment.this["keyvault-created"]
   to   = module.workload_identity["external-secrets"].azurerm_role_assignment.this["keyvault"]
 }
+
+# Moves each subnet, and the nodes subnet's egress association, from the network module to the module
+# that creates it. Without these, Terraform replaces the subnets of applied clusters. The ingress
+# subnet and the association had a count in both modules: the aks-cluster module drops their index.
+
+moved {
+  from = module.network.azurerm_subnet.nodes
+  to   = module.cluster.azurerm_subnet.nodes
+}
+
+moved {
+  from = module.network.azurerm_subnet.apiserver
+  to   = module.cluster.azurerm_subnet.apiserver
+}
+
+moved {
+  from = module.network.azurerm_subnet.ingress_lb[0]
+  to   = module.cluster.azurerm_subnet.ingress_lb[0]
+}
+
+moved {
+  from = module.network.azurerm_subnet_route_table_association.nodes[0]
+  to   = module.cluster.azurerm_subnet_route_table_association.nodes[0]
+}
+
+# The egress route table moved to the module that creates the nodes subnet. It used to have a count.
+moved {
+  from = module.network.azurerm_route_table.egress[0]
+  to   = module.cluster.azurerm_route_table.egress
+}
+
+moved {
+  from = module.network.azurerm_subnet.bastion[0]
+  to   = module.bastion[0].azurerm_subnet.this
+}

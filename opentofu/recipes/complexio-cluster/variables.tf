@@ -86,36 +86,73 @@ variable "existing_vnet_resource_group_name" {
 }
 
 variable "vnet_cidr" {
-  type    = string
-  default = "10.224.0.0/16"
+  description = "Address space of the VNet the recipe creates, carved into one /24 per subnet. Ignored when existing_vnet_name is set."
+  type        = string
+  default     = "10.224.0.0/16"
+
+  validation {
+    condition     = var.existing_vnet_name != null || can(cidrsubnet(var.vnet_cidr, 8, 6))
+    error_message = "vnet_cidr must be a CIDR with room for seven subnets 8 bits longer, e.g. a /16 for /24 subnets."
+  }
 }
 
 variable "nodes_subnet_cidr" {
   description = "Defaults to the first /24 of vnet_cidr. Required when existing_vnet_name is set."
   type        = string
   default     = null
+
+  validation {
+    condition     = var.existing_vnet_name == null || var.nodes_subnet_cidr != null
+    error_message = "Set nodes_subnet_cidr explicitly when existing_vnet_name is used: the recipe cannot know which ranges are free in a VNet it did not create."
+  }
 }
 
 variable "apiserver_subnet_cidr" {
   description = "Defaults to the second /24 of vnet_cidr. Required when existing_vnet_name is set."
   type        = string
   default     = null
+
+  validation {
+    condition     = var.existing_vnet_name == null || var.apiserver_subnet_cidr != null
+    error_message = "Set apiserver_subnet_cidr explicitly when existing_vnet_name is used."
+  }
 }
 
 variable "bastion_subnet_cidr" {
   description = "Defaults to the third /24 of vnet_cidr. Required when existing_vnet_name and create_bastion are set."
   type        = string
   default     = null
+
+  validation {
+    condition     = var.existing_vnet_name == null || !var.create_bastion || var.bastion_subnet_cidr != null
+    error_message = "Set bastion_subnet_cidr explicitly when existing_vnet_name is used."
+  }
 }
 
 variable "ingress_lb_subnet_cidr" {
-  description = "Subnet for the gateway's private load balancer behind an existing network appliance. Defaults to the sixth /24 of vnet_cidr. Required when existing_vnet_name and use_existing_network_appliance are set."
+  description = "Subnet for the cluster's private load balancer. Defaults to the sixth /24 of vnet_cidr. Required when existing_vnet_name is set."
   type        = string
   default     = null
 
   validation {
-    condition     = var.ingress_lb_subnet_cidr == null || var.use_existing_network_appliance
-    error_message = "ingress_lb_subnet_cidr is only used with use_existing_network_appliance: without it the gateway has a public IP."
+    condition     = var.existing_vnet_name == null || var.ingress_lb_subnet_cidr != null
+    error_message = "Set ingress_lb_subnet_cidr explicitly when existing_vnet_name is used."
+  }
+}
+
+variable "network_appliance_subnet_cidr" {
+  description = "Range of the network appliance Terraform creates, a /24 at least: the firewall takes its first half, the scale set its second. Defaults to the seventh /24 of vnet_cidr. Required when existing_vnet_name is set, unless network_appliance is \"existing\"."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.network_appliance_subnet_cidr == null || (can(cidrnetmask(var.network_appliance_subnet_cidr)) && try(tonumber(split("/", var.network_appliance_subnet_cidr)[1]) <= 24, false))
+    error_message = "network_appliance_subnet_cidr must be an IPv4 CIDR of at least a /24: each half must fit Azure Firewall's two /26 subnets."
+  }
+
+  validation {
+    condition     = var.existing_vnet_name == null || var.network_appliance == "existing" || var.network_appliance_subnet_cidr != null
+    error_message = "Set network_appliance_subnet_cidr explicitly when existing_vnet_name is used."
   }
 }
 
@@ -144,44 +181,69 @@ variable "create_bastion" {
   default     = false
 }
 
+# Kept only to fail a tfvars file that still sets it.
+# tflint-ignore: terraform_unused_declarations
 variable "create_gateway_public_ip" {
-  description = "Create a static public IP for the gateway's LoadBalancer Service, kept when the Gateway or the cluster is deleted. Set false when the gateway needs no public access. Ignored with use_existing_network_appliance."
-  type        = bool
-  default     = true
+  description = "Removed: the gateway always has a private IP, and the network appliance forwards HTTPS to it."
+  type        = any
+  default     = null
+
+  validation {
+    condition     = var.create_gateway_public_ip == null
+    error_message = "Variable 'create_gateway_public_ip' was removed: the gateway always has a private IP behind the network appliance. Remove it."
+  }
 }
 
+# Kept only to fail a tfvars file that still sets it.
+# tflint-ignore: terraform_unused_declarations
 variable "use_existing_network_appliance" {
-  description = "Send all traffic in and out of the cluster through an existing network appliance: a firewall, or any other appliance the customer uses to manage inbound and outbound traffic, such as one in a hub reached over a VNet peering. Otherwise egress leaves through a NAT gateway. All egress goes to the appliance's private IP, and the gateway has no public IP: it gets a private IP that the appliance forwards HTTPS to. The appliance's owner keeps its egress allow-list. Decide before the cluster is created."
-  type        = bool
-  default     = false
+  description = "Replaced by network_appliance = \"existing\"."
+  type        = any
+  default     = null
+
+  validation {
+    condition     = var.use_existing_network_appliance == null
+    error_message = "Variable 'use_existing_network_appliance' was replaced by network_appliance. Set network_appliance = \"existing\" instead of true, and remove it."
+  }
+}
+
+variable "network_appliance" {
+  description = "What all traffic in and out of the cluster goes through. \"vm_scale_set\": a scale set of Linux VMs behind load balancers, created by Terraform. \"azure_firewall\": an Azure Firewall, created by Terraform. \"existing\": the customer's own appliance, such as a firewall in a hub reached over a VNet peering. All egress goes to the appliance's private IP, and the gateway has only a private IP that the appliance forwards HTTPS to. It can be changed on an existing cluster."
+  type        = string
+  default     = "vm_scale_set"
+
+  validation {
+    condition     = contains(["vm_scale_set", "azure_firewall", "existing"], var.network_appliance)
+    error_message = "network_appliance must be vm_scale_set, azure_firewall or existing."
+  }
 }
 
 variable "existing_network_appliance_private_ip" {
-  description = "Private IP of the existing network appliance, the next hop for all egress. Required with use_existing_network_appliance."
+  description = "Private IP of the existing network appliance, the next hop for all egress. Required when network_appliance is \"existing\"."
   type        = string
   default     = null
 
   validation {
-    condition     = !var.use_existing_network_appliance || can(cidrhost("${var.existing_network_appliance_private_ip}/32", 0))
-    error_message = "Set existing_network_appliance_private_ip to an IPv4 address when use_existing_network_appliance is true."
+    condition     = var.network_appliance != "existing" || can(cidrhost("${var.existing_network_appliance_private_ip}/32", 0))
+    error_message = "Set existing_network_appliance_private_ip to an IPv4 address when network_appliance is \"existing\"."
   }
 }
 
 variable "existing_network_appliance_vnet_id" {
-  description = "Resource ID of the VNet holding the existing network appliance. Terraform peers it with the cluster's VNet both ways. Set existing_network_appliance_subscription_id when it is in another subscription. Required with use_existing_network_appliance."
+  description = "Resource ID of the VNet holding the existing network appliance. Terraform peers it with the cluster's VNet both ways. Set existing_network_appliance_subscription_id when it is in another subscription. Required when network_appliance is \"existing\"."
   type        = string
   default     = null
 
   validation {
-    condition     = !var.use_existing_network_appliance || var.existing_network_appliance_vnet_id != null
-    error_message = "Set existing_network_appliance_vnet_id when use_existing_network_appliance is true."
+    condition     = var.network_appliance != "existing" || var.existing_network_appliance_vnet_id != null
+    error_message = "Set existing_network_appliance_vnet_id when network_appliance is \"existing\"."
   }
 }
 
 # --- Access -------------------------------------------------------------------------------------
 
 variable "azure_rbac" {
-  description = "Entra group object IDs per AKS built-in role. https://learn.microsoft.com/en-us/azure/aks/manage-azure-rbac#aks-built-in-roles"
+  description = "Entra group object IDs per AKS built-in role, on top of admin_groups. https://learn.microsoft.com/en-us/azure/aks/manage-azure-rbac#aks-built-in-roles"
   type = object({
     admin_principal_ids         = optional(list(string), [])
     cluster_admin_principal_ids = optional(list(string), [])
@@ -189,10 +251,15 @@ variable "azure_rbac" {
     reader_principal_ids        = optional(list(string), [])
   })
   default = {}
+}
+
+variable "admin_groups" {
+  description = "Entra group object IDs added to both azure_rbac.cluster_admin_principal_ids and key_vault_secrets_officer_groups. Whoever runs this recipe must be in one."
+  type        = list(string)
 
   validation {
-    condition     = length(var.azure_rbac.cluster_admin_principal_ids) > 0
-    error_message = "The bootstrap runs kubectl as whoever runs Terraform, who must be in azure_rbac.cluster_admin_principal_ids."
+    condition     = length(var.admin_groups) > 0
+    error_message = "This list cannot be empty."
   }
 }
 
@@ -206,6 +273,12 @@ variable "docker_acr_registries" {
     subscription_id     = string
   }))
   default = []
+
+  # The grants are keyed by <resource_group_name>/<name>.
+  validation {
+    condition     = length(distinct([for r in var.docker_acr_registries : "${r.resource_group_name}/${r.name}"])) == length(var.docker_acr_registries)
+    error_message = "docker_acr_registries must not list a registry twice: two with the same resource group and name collide, even in different subscriptions."
+  }
 }
 
 variable "generic_acr_registries" {
@@ -216,6 +289,12 @@ variable "generic_acr_registries" {
     subscription_id     = string
   }))
   default = []
+
+  # The grants are keyed by <resource_group_name>/<name>.
+  validation {
+    condition     = length(distinct([for r in var.generic_acr_registries : "${r.resource_group_name}/${r.name}"])) == length(var.generic_acr_registries)
+    error_message = "generic_acr_registries must not list a registry twice: two with the same resource group and name collide, even in different subscriptions."
+  }
 }
 
 # --- Complexio installations --------------------------------------------------------------------
@@ -224,6 +303,11 @@ variable "k8s_namespaces" {
   description = "One namespace per Complexio installation in the cluster."
   type        = list(string)
   default     = ["complexio-prod", "complexio-prodv2"]
+
+  validation {
+    condition     = length(distinct(var.k8s_namespaces)) == length(var.k8s_namespaces)
+    error_message = "k8s_namespaces must not list a namespace twice: each gets one inference-worker identity."
+  }
 }
 
 # --- Key Vault ----------------------------------------------------------------------------------
@@ -240,7 +324,7 @@ variable "azure_key_vault_name" {
 }
 
 variable "key_vault_secrets_officer_groups" {
-  description = "Principal IDs granted Key Vault Secrets Officer and Key Vault Certificates Officer on the Key Vault. Whoever runs this recipe or entra-app-registrations needs them."
+  description = "Principal IDs granted Key Vault Secrets Officer and Key Vault Certificates Officer on the Key Vault, on top of admin_groups. Whoever runs entra-app-registrations must be in one of these or in admin_groups."
   type        = list(string)
   default     = []
 }
@@ -288,7 +372,7 @@ variable "postgres_version" {
 }
 
 variable "postgres_sku_name" {
-  description = "Compute SKU, prefixed with its tier: MO_ (memory optimized), GP_ (general purpose) or B_ (burstable). Use MO_Standard_E16ds_v5 where v6 is not available in the region."
+  description = "Compute SKU: memory optimized E (MO_Standard_E...) or general purpose D (GP_Standard_D...). Use MO_Standard_E16ds_v5 where v6 is not available in the region."
   type        = string
   default     = "MO_Standard_E16ds_v5"
 }
@@ -434,7 +518,7 @@ variable "dns_zone" {
   }
 
   validation {
-    condition     = var.dns_zone == null || !endswith(var.dns_zone.prefix, var.dns_zone.parent_zone_name)
+    condition     = var.dns_zone == null || !(var.dns_zone.prefix == var.dns_zone.parent_zone_name || endswith(var.dns_zone.prefix, ".${var.dns_zone.parent_zone_name}"))
     error_message = "dns_zone.prefix is the part in front of the parent zone, not the full name: use \"acme\", not \"acme.example.com\"."
   }
 }

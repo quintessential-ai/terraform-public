@@ -101,10 +101,10 @@ features = {
   stevie_teams_delegated      = true
   stevie_sharepoint_delegated = true
 
-  # Mail drafting and sending are on by default and are consented for Complexio - Backend.
-  # Let Stevie write mail drafts, and send the ones the user approves, as the user.
-  stevie_mail_drafting_delegated = true
-  stevie_mail_sending_delegated  = true # Needs stevie_mail_drafting_delegated.
+  # Mail drafting and sending: left out, Complexio - Backend asks for them and an Entra
+  # administrator approves them; the install never grants them. false removes them. See the README.
+  # stevie_mail_drafting_delegated = false
+  # stevie_mail_sending_delegated  = false
 }
 
 # With either Teams ingestion switch: the Event Hubs namespace Microsoft Graph sends Teams change
@@ -134,14 +134,19 @@ terraform plan
 terraform apply
 ```
 
+Apply right after planning: see [Mail drafting and sending](#mail-drafting-and-sending) for why a
+saved plan applied later can remove a mail approval.
+
 The plan lists every permission it grants. `terraform output application_permissions`,
-`sso_delegated_permissions` and `backend_delegated_permissions` show them again after apply.
+`sso_delegated_permissions` and `backend_delegated_permissions` show them again after apply, and
+`backend_requested_delegated_permissions` what Complexio - Backend asks for, mail write included.
 
 ## Features
 
 Each switch in `features` grants the Microsoft Graph permissions one feature needs, and nothing
 is granted for a switch that is off. Switch off anything you have not agreed with Complexio:
-the `stevie_*` switches, including mail drafting and sending, are on by default.
+the `stevie_*` switches are on by default. Mail drafting and sending are the exception: the
+install asks for them but never grants them, and an Entra administrator approves them.
 
 | Switch | Default | What it lets Complexio do |
 | --- | --- | --- |
@@ -158,12 +163,12 @@ the `stevie_*` switches, including mail drafting and sending, are on by default.
 | `stevie_meetings_delegated` | on | Let Stevie find meetings and read their transcripts. |
 | `stevie_teams_delegated` | on | Let Stevie read the signed-in user's teams, channels and chats. |
 | `stevie_sharepoint_delegated` | on | Let Stevie search and read the SharePoint sites, lists and files the signed-in user can open. |
-| `stevie_mail_drafting_delegated` | on | Let Stevie write reply and forward drafts in the signed-in user's mailbox. |
-| `stevie_mail_sending_delegated` | on | Let Stevie send the drafts the signed-in user approves. Needs `stevie_mail_drafting_delegated`. |
+| `stevie_mail_drafting_delegated` | requested, kept once approved | Let Stevie write reply and forward drafts in the signed-in user's mailbox. Leave it out, or set `false` to stop asking for it; `true` is refused. See [Mail drafting and sending](#mail-drafting-and-sending). |
+| `stevie_mail_sending_delegated` | requested, kept once approved | Let Stevie send the drafts the signed-in user approves. Leave it out, or set `false` to stop asking for it; `true` is refused. Removed with drafting. |
 
 Switches ending in `_delegated` act as the signed-in user, so they never reach further than what
 that user can already see. They are granted to Complexio - Backend, and to Complexio - SSO as
-well, except mail drafting and sending, which only Complexio - Backend gets. The others work
+well, except mail drafting and sending, which only Complexio - Backend asks for. The others work
 without a signed-in user.
 [`permissions.tf`](permissions.tf) lists each permission with what it is needed for.
 
@@ -171,22 +176,102 @@ without a signed-in user.
 asks for them. It refuses mailbox, calendar and contact permissions, which would reach every
 mailbox in your tenant.
 
+### Mail drafting and sending
+
+Whether Stevie may write and send mail as the user is your Entra administrator's decision, not the
+install's. The install never grants it. With both switches left out, Complexio - Backend asks for
+the delegated `Mail.ReadWrite` and `Mail.Send` permissions, and under **API permissions** in
+Microsoft Entra they show as requested, not granted. An Entra administrator approves them from
+the link in Complexio Settings, or with **Grant admin consent** on Complexio - Backend's
+**API permissions** page. Every later `apply` keeps that approval.
+
+They act only as the signed-in user, so they reach that user's own mailbox and nothing else, and
+Complexio - SSO never holds them. They need no [Mailbox access](#mailbox-access) step: that one
+governs application access to the mailboxes you list, while this is the signed-in user's own
+mailbox.
+
+- **Drafting only.** **Grant admin consent** approves drafting and sending together. To allow
+  drafting only, set `stevie_mail_sending_delegated = false`: Complexio - Backend then asks for
+  `Mail.ReadWrite` alone, and the next `apply` removes an approved `Mail.Send`.
+- **Removing it.** Set `stevie_mail_drafting_delegated = false`, which removes sending as well,
+  since Stevie sends only drafts it has written, and `apply`. Complexio - Backend then no longer
+  asks for mail write, and the apply removes the tenant-wide approval; `plan` and `apply` warn
+  (`mail_write_approval_kept`) when a `false` switch removes an approval. Or revoke the admin
+  consent for `Mail.ReadWrite` and `Mail.Send` on the **API permissions** page: later applies don't
+  add it back. An approved `Mail.Send` is kept only while `Mail.ReadWrite` is approved too.
+- **Users' own consent.** Both permissions are ones users may consent to for themselves, if your
+  tenant's user consent settings allow it. The install neither reads nor removes a user's own
+  consent: it is listed under **Enterprise applications**, Complexio - Backend, **Permissions**,
+  **User consent**, where **Review permissions** gives the commands that revoke it.
+- **`true` is refused.** The plan stops if either switch is `true`. Remove the line to keep the
+  approval your tenant already holds.
+- **Apply right after planning.** `plan` reads which mail write is approved, and then lists it
+  among the permissions it keeps. An approval given after the plan, and before its `apply` (for
+  example with a plan saved by `plan -out` and applied later), is not seen, and if that `apply`
+  changes Complexio - Backend's permissions it removes the approval. Approve again, or plan again
+  first. Only a first install, which creates Complexio - Backend, reads the approval during the
+  apply instead.
+- **With every `stevie_*` reading switch off**, Complexio - Backend holds no delegated permission
+  to keep an approval with, so it asks for no mail write either.
+
+```hcl
+features = {
+  # ... the other switches ...
+  stevie_mail_sending_delegated = false # Drafting only.
+}
+```
+
+Reading the approval uses the `microsoft/msgraph` provider, which signs in through the Azure CLI
+like the `azuread` provider, with no further setup.
+
 ## Upgrading
 
-Earlier versions of this recipe left every `stevie_*` switch and `create_and_assign_access_groups`
-off. They are now on by default, so the next `apply` of a configuration that omits them:
+The reading switches and the access groups are now on by default, and mail drafting and sending
+are off. The next `apply` of a configuration that omits them:
 
-- Grants admin consent for the Stevie delegated permissions, including `Mail.Send` and
-  `Mail.ReadWrite` (mail drafting and sending).
-- Removes `Mail.Send` from Complexio - SSO. Earlier versions granted it there with
-  `stevie_mail_delegated`, but Stevie only reads mail through Complexio - SSO and sends through
-  Complexio - Backend.
+- Grants admin consent for the Stevie reading permissions only: none for `Mail.ReadWrite` or
+  `Mail.Send`.
+- Removes `Mail.Send` from Complexio - SSO, and `Mail.ReadWrite` and `Mail.Send` from
+  Complexio - Backend, if your install holds them. The version of 27 October granted them by
+  default; earlier versions left every `stevie_*` switch off and granted none. Stevie reads mail
+  through Complexio - SSO and writes it through Complexio - Backend.
 - Creates the standard access groups. If you already created groups such as `complexio-owners`
   by hand, the apply stops. Choose another `access_group_name_prefix` or opt out.
 
-To keep the previous behaviour, set each `stevie_*` switch you don't want to `false` (turning off
-`stevie_mail_drafting_delegated` also needs `stevie_mail_sending_delegated = false`), and set
-`create_and_assign_access_groups = false`.
+To keep the rest of the previous behaviour, set each `stevie_*` switch you don't want to `false`,
+and set `create_and_assign_access_groups = false`.
+
+Mail drafting and sending are now approved in Microsoft Entra, not switched on in the install; see
+[Mail drafting and sending](#mail-drafting-and-sending). After upgrading:
+
+- Remove any `stevie_mail_drafting_delegated = false` or `stevie_mail_sending_delegated = false`
+  you copied from the earlier example, unless you mean to keep mail write out: `false` now means
+  Complexio - Backend doesn't ask for it, so an administrator has nothing to approve, and the next
+  `apply` removes an approval given from Complexio Settings. `plan` warns
+  (`mail_write_approval_kept`) when it is about to.
+- Remove any `stevie_mail_drafting_delegated = true` or `stevie_mail_sending_delegated = true`:
+  the plan now stops on `true`.
+- The next `apply` keeps whatever mail write your tenant holds, whether an administrator approved
+  it or an earlier version of this install granted it. To remove it, set
+  `stevie_mail_drafting_delegated = false` and `apply`, or revoke it in Microsoft Entra.
+- If an `apply` stops because Complexio - Backend's Microsoft Graph grant already exists, the
+  grant was created outside the install: an administrator approved mail write while every
+  `stevie_*` switch was off, or revoked all of Complexio - Backend's admin consent and granted it
+  again. Take the grant over once, then apply again:
+
+  ```bash
+  # Complexio - Backend's object ID, from its client ID, and its Microsoft Graph grant's ID.
+  backend=$(az ad sp show --id "$(terraform output -raw backend_client_id)" --query id -o tsv)
+  graph=$(az ad sp show --id 00000003-0000-0000-c000-000000000000 --query id -o tsv)
+  grant=$(az rest --url "https://graph.microsoft.com/v1.0/servicePrincipals/$backend/oauth2PermissionGrants" \
+    --query "value[?consentType=='AllPrincipals' && resourceId=='$graph'] | [0].id" -o tsv)
+  terraform import 'azuread_service_principal_delegated_permission_grant.backend_graph[0]' "/oauth2PermissionGrants/$grant"
+  ```
+
+  With OpenTofu, run `tofu` in place of `terraform`. If you call the recipe as a module, prefix
+  the address with the module's, such as
+  `module.complexio_entra_app_registrations.azuread_service_principal_delegated_permission_grant.backend_graph[0]`,
+  and read `backend_client_id` from the module's output.
 
 Complexio - SSO now asks for its own `access` scope, so Claude can sign in to the Context Broker,
 and its API permissions are managed as separate resources. If you applied an earlier version,
@@ -225,11 +310,11 @@ have no effect, because Exchange adds the two together.
 
 > **Don't add application mail permissions to Complexio - Backend in the Entra admin center.**
 > Its API permissions show no application mail permission, and that is intended: mailbox access
-> is in Exchange. The delegated mail permissions of the Stevie switches are expected there; they
-> reach only the signed-in user's own mailbox. Adding `Mail.Read`, `Mail.ReadWrite` or `Mail.Send` as an application permission and granting
-> admin consent would open every mailbox in your tenant. A later apply removes the permission
-> from the list but not the consent, so revoke it yourself under the enterprise application's
-> **Permissions** if it ever happens.
+> is in Exchange. The delegated mail permissions appear there only for the Stevie switches you
+> turn on; they reach only the signed-in user's own mailbox. Adding `Mail.Read`, `Mail.ReadWrite`
+> or `Mail.Send` as an application permission and granting admin consent would open every
+> mailbox in your tenant. A later apply removes the permission from the list but not the consent,
+> so revoke it yourself under the enterprise application's **Permissions** if it ever happens.
 
 After `apply`:
 
@@ -244,8 +329,8 @@ After `apply`:
    as the output shows. Changes take from 30 minutes to 2 hours to apply; the check sees them at
    once.
 
-Complexio can't read, draft or send mail until this is done. Users you add to the unit later are
-in scope without running the commands again. If Complexio - Backend is ever recreated, Exchange
+Complexio can't reach the mailboxes you choose until this is done. Users you add to the unit later
+are in scope without running the commands again. If Complexio - Backend is ever recreated, Exchange
 removes its grants with it: run the commands again from the new output.
 
 Microsoft documents this in

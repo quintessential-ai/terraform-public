@@ -1,18 +1,30 @@
 # complexio-cluster
 
 Creates the network, the private AKS cluster and the Azure resources Complexio runs on in the
-customer's subscription. This page covers sending the cluster's traffic through the customer's own
-network appliance, and bootstrapping the cluster.
+customer's subscription. This page covers the network appliance the cluster's traffic goes
+through, and bootstrapping the cluster.
+
+## Network appliance
+
+All traffic in and out of the cluster goes through a network appliance, and the cluster gets no
+public IP. The appliance forwards HTTPS from its public IP to the cluster's private load balancer.
+`network_appliance` picks it:
+
+- `vm_scale_set` (default): two Linux VMs in a scale set, created by Terraform and kept patched by
+  Azure. Its quota family, `standardBpsv2Family`, needs 6 vCPUs in the cluster's region.
+- `azure_firewall`: an Azure Firewall, Basic tier, created by Terraform.
+- `existing`: the customer's own network appliance. See below.
+
+With the first two, the `network_appliance_public_ip_address` output is where all egress comes from
+and where the application DNS records point.
+
+It can be changed on an existing cluster, for example to the customer's own firewall later.
 
 ## Traffic through the customer's existing network appliance
 
 The network appliance is a firewall, or any other appliance the customer uses to manage inbound
-and outbound traffic. With `use_existing_network_appliance = true`, all traffic from the
-cluster's nodes leaves through it, and the cluster gets no public IP. The appliance forwards
-HTTPS from its public IP to the cluster's private load balancer.
-
-Decide before the cluster is created: `use_existing_network_appliance` cannot be switched on an
-existing cluster.
+and outbound traffic. With `network_appliance = "existing"`, all traffic from the cluster's nodes
+leaves through it, and it forwards HTTPS from its public IP to the cluster's private load balancer.
 
 ### Address ranges
 
@@ -58,7 +70,7 @@ The cluster's nodes cannot start until these are in place.
 Then set in the tfvars:
 
 ```hcl
-use_existing_network_appliance        = true
+network_appliance                     = "existing"
 existing_network_appliance_private_ip = "<appliance private IP>"
 existing_network_appliance_vnet_id    = "<appliance VNet resource ID>"
 # Only when the appliance's VNet is in another subscription:
@@ -90,6 +102,5 @@ name, so that ExternalSecrets can bring them into the cluster:
 - `tf-complexio-cluster--INPUTS`: every variable except `postgres_administrator_password`.
 - `tf-complexio-cluster--OUTPUTS`: every output.
 
-A variable or output that is null is left out. Whoever runs Terraform writes both, so needs
-`Key Vault Secrets Officer` through `key_vault_secrets_officer_groups`, or `Key Vault Administrator`
-through `azure_rbac.cluster_admin_principal_ids`.
+A variable or output that is null is left out. Whoever runs Terraform writes both, so must be in
+`admin_groups`.

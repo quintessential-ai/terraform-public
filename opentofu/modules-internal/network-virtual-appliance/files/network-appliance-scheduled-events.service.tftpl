@@ -1,0 +1,12 @@
+[Unit]
+Description=Drain the network appliance before Azure deletes, reboots or redeploys the instance
+After=network-online.target nftables.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/network-appliance-scheduled-events ${grace_seconds}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

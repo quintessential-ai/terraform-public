@@ -1,0 +1,24 @@
+#!/usr/sbin/nft -f
+
+# Replaces only this table: the Azure agent keeps rules of its own in another one.
+table inet network_appliance
+delete table inet network_appliance
+
+table inet network_appliance {
+  # The public load balancer delivers the ingress ports to this instance's own address.
+  chain prerouting {
+    type nat hook prerouting priority dstnat; policy accept;
+    fib daddr type local tcp dport { ${join(", ", ingress_ports)} } dnat ip to ${ingress_target_ip}
+  }
+
+  # Everything forwarded leaves from this instance's address, so replies come back through it.
+  chain postrouting {
+    type nat hook postrouting priority srcnat; policy accept;
+    oifname "eth0" masquerade
+  }
+
+  # Empty until network-appliance-drain adds the rules that reset the flows still forwarded.
+  chain drain {
+    type filter hook forward priority filter - 10; policy accept;
+  }
+}

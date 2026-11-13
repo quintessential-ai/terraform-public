@@ -11,14 +11,19 @@ variable "region" {
   type        = string
 }
 
-variable "subnet_id" {
-  description = "AzureBastionSubnet in the VNet holding the private API server."
+variable "vnet_id" {
+  description = "VNet holding the private API server, where the AzureBastionSubnet is created."
   type        = string
 }
 
 variable "subnet_cidr" {
-  description = "Range of subnet_id, the source the NSG rules match."
+  description = "Range of the AzureBastionSubnet, and the source the NSG rules match. A /26 at least."
   type        = string
+
+  validation {
+    condition     = can(cidrnetmask(var.subnet_cidr)) && tonumber(split("/", var.subnet_cidr)[1]) <= 26
+    error_message = "subnet_cidr must be an IPv4 CIDR of at least a /26: Azure Bastion refuses a smaller subnet."
+  }
 }
 
 variable "apiserver_subnet_id" {
@@ -31,14 +36,6 @@ variable "apiserver_subnet_cidr" {
 
 variable "nodes_subnet_id" {
   type = string
-}
-
-variable "gateway_public_ip" {
-  description = "The gateway's public IP when its LoadBalancer Service is public; the nodes NSG lets the internet reach it on 443. An object so that whether it is set is known at plan time, before the address is."
-  type = object({
-    address = string
-  })
-  default = null
 }
 
 variable "tunnel_principal_ids" {
