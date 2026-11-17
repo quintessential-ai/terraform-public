@@ -19,7 +19,7 @@ directory.
 | --- | --- |
 | `CPX-TENANT-ID` | Your tenant ID |
 | `CPX-SSO-CLIENT-ID` | Complexio - SSO's client ID |
-| `CPX-SSO-CHAT-API-SECRET`, `CPX-SSO-GATEWAY-SECRET` | Complexio - SSO's two client secrets, until Stevie signs in with the certificate |
+| `CPX-SSO-CHAT-API-SECRET` | Complexio - SSO's client secret, until Stevie signs in with the certificate |
 | `CPX-SSO-CERTIFICATE` | Complexio - SSO's certificate and private key |
 | `CPX-BACKEND-CLIENT-ID` | Complexio - Backend's client ID |
 | `CPX-BACKEND-SECRET` | Complexio - Backend's client secret |
@@ -205,6 +205,16 @@ mailbox.
   **User consent**, where **Review permissions** gives the commands that revoke it.
 - **`true` is refused.** The plan stops if either switch is `true`. Remove the line to keep the
   approval your tenant already holds.
+- **Approving from Settings with Microsoft's consent page.** Complexio - Backend has one
+  redirect address on each browser host, `https://<host>/settings/consent-return`: the page in
+  Complexio Settings that Microsoft returns an administrator to after approving, and its only
+  purpose. Settings can then offer an Entra administrator Microsoft's admin-consent page, which
+  approves the missing mail permissions even when Complexio - Backend does not ask for them, and
+  takes them back to where they were in Settings. Set Settings' `mailIntegrationConsentLink` to
+  `true` once this recipe has been applied. While a switch is `false`, the next `apply` still removes an approval of that permission.
+  The address does not change who can consent: users' own consent (see **Users' own consent**
+  above) depends on your tenant's user consent settings, with or without it. Microsoft recommends
+  setting user consent to verified publishers or admin approval only.
 - **Apply right after planning.** `plan` reads which mail write is approved, and then lists it
   among the permissions it keeps. An approval given after the plan, and before its `apply` (for
   example with a plan saved by `plan -out` and applied later), is not seen, and if that `apply`

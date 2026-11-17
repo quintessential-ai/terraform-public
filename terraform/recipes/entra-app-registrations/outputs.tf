@@ -23,7 +23,6 @@ output "key_vault_entries" {
       TENANT-ID           = "Your tenant ID."
       SSO-CLIENT-ID       = "Complexio - SSO's client ID."
       SSO-CHAT-API-SECRET = "Complexio - SSO's client secret for Stevie Chat API."
-      SSO-GATEWAY-SECRET  = "Complexio - SSO's client secret for Stevie Gateway."
       BACKEND-CLIENT-ID   = "Complexio - Backend's client ID."
       BACKEND-SECRET      = "Complexio - Backend's client secret."
     }[key] },
@@ -34,7 +33,6 @@ output "credential_expiry" {
   description = "When each credential expires. Renew it before then."
   value = {
     sso_chat_api_secret = azuread_application_password.sso_chat_api.end_date
-    sso_gateway_secret  = azuread_application_password.sso_gateway.end_date
     backend_secret      = azuread_application_password.backend.end_date
     sso_certificate     = azuread_application_certificate.this["sso"].end_date
     backend_certificate = azuread_application_certificate.this["backend"].end_date

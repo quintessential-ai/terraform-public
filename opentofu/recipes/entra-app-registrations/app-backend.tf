@@ -34,6 +34,20 @@ resource "azuread_application" "backend" {
     }
   }
 
+  # Where Microsoft's admin-consent page returns an administrator who approves a permission from
+  # Settings; its only purpose. Settings' page trusts nothing it is sent and reads the approval back
+  # from Entra. Nobody signs in to this registration through it.
+  web {
+    redirect_uris = local.backend_consent_redirect_uris
+
+    # Microsoft hands out no token through the address: the code it returns needs Backend's
+    # credential, which only Complexio's services hold.
+    implicit_grant {
+      access_token_issuance_enabled = false
+      id_token_issuance_enabled     = false
+    }
+  }
+
   dynamic "required_resource_access" {
     for_each = length(setunion(local.known_application_permissions, local.backend_requested_delegated_permissions)) > 0 ? [data.azuread_service_principal.msgraph.client_id] : []
     content {
@@ -148,6 +162,11 @@ data "msgraph_resource" "backend_graph_grant" {
 }
 
 locals {
+  # Settings' consent return page on every browser host.
+  backend_consent_redirect_uris = [
+    for host in var.browser_hosts : "https://${host}/settings/consent-return"
+  ]
+
   # null when there is no grant to read, or no tenant-wide grant yet.
   backend_granted_scope      = one([for grant in data.msgraph_resource.backend_graph_grant : grant.output.scope])
   backend_granted_scopes     = toset(compact(split(" ", local.backend_granted_scope == null ? "" : local.backend_granted_scope)))

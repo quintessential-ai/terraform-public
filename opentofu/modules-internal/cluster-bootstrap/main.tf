@@ -1,6 +1,6 @@
 # Seeds a cluster with Flux and ExternalSecrets, then hands it over to Flux.
 #
-# Everything runs through AKS run command (`az aks command invoke`, in scripts/run-command.sh): the
+# Everything runs through AKS run command (`az aks command invoke`, in files/run-command.sh): the
 # API server is usually private, and run command reaches it through ARM.
 
 locals {
@@ -9,7 +9,7 @@ locals {
     external_secrets = "2.14.0"
   }
 
-  seed_manifest = templatefile("${path.module}/manifests/seed.yaml.tftpl", {
+  seed_manifest = templatefile("${path.module}/files/seed.yaml.tftpl", {
     external_key_vault_external_secrets_client_id = var.external_key_vault.external_secrets_client_id
     external_key_vault_tenant_id                  = var.external_key_vault.tenant_id
     external_key_vault_url                        = var.external_key_vault.key_vault_url
@@ -23,7 +23,7 @@ locals {
   })
 
 
-  bootstrap_script = templatefile("${path.module}/scripts/bootstrap.sh.tftpl", {
+  bootstrap_script = templatefile("${path.module}/files/bootstrap.sh.tftpl", {
     flux_chart_version             = local.chart_versions.flux
     external_secrets_chart_version = local.chart_versions.external_secrets
   })
@@ -45,7 +45,7 @@ resource "terraform_data" "bootstrap" {
 
   provisioner "local-exec" {
     interpreter = ["bash"]
-    command     = "${path.module}/scripts/run-command.sh"
+    command     = "${path.module}/files/run-command.sh"
     environment = merge(local.run_command_environment, {
       SCRIPT   = local.bootstrap_script
       MANIFEST = local.seed_manifest

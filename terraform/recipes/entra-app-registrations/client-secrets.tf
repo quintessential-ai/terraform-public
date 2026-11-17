@@ -11,13 +11,6 @@ resource "azuread_application_password" "sso_chat_api" {
   end_date       = time_offset.secret_expiry.rfc3339
 }
 
-# Complexio - SSO's client secret for Stevie Gateway, until it signs in with the certificate.
-resource "azuread_application_password" "sso_gateway" {
-  application_id = azuread_application.sso.id
-  display_name   = "Stevie Gateway"
-  end_date       = time_offset.secret_expiry.rfc3339
-}
-
 # Complexio - Backend's client secret, for the services that sign in with a secret.
 resource "azuread_application_password" "backend" {
   application_id = azuread_application.backend.id

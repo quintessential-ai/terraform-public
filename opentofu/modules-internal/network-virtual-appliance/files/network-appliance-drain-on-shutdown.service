@@ -1,0 +1,16 @@
+# Drains the instance when it shuts down without a scheduled event, e.g. a reboot from inside it.
+# It stops before the health endpoint and nftables, which it starts after, so both still work.
+[Unit]
+Description=Drain the network appliance when the instance shuts down
+After=network-online.target nftables.service network-appliance-health.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+# Enough for the load balancers to see the failing probe: two probes, 5 seconds apart.
+ExecStop=/usr/local/bin/network-appliance-drain 15
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

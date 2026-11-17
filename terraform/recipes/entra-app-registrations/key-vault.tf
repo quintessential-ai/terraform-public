@@ -7,7 +7,6 @@ locals {
     TENANT-ID           = data.azuread_client_config.current.tenant_id
     SSO-CLIENT-ID       = azuread_application.sso.client_id
     SSO-CHAT-API-SECRET = azuread_application_password.sso_chat_api.value
-    SSO-GATEWAY-SECRET  = azuread_application_password.sso_gateway.value
     BACKEND-CLIENT-ID   = azuread_application.backend.client_id
     BACKEND-SECRET      = azuread_application_password.backend.value
   }
