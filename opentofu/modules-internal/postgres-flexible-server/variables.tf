@@ -1,10 +1,11 @@
 variable "name" {
-  description = "Globally unique: it becomes <name>.postgres.database.azure.com."
+  description = "Globally unique: it becomes `<name>.postgres.database.azure.com`."
   type        = string
 }
 
 variable "resource_group_name" {
-  type = string
+  description = "Resource group the server is created in, and the private DNS zone when one is created."
+  type        = string
 }
 
 variable "region" {
@@ -21,7 +22,7 @@ variable "vnet_id" {
 }
 
 variable "subnet_name" {
-  description = "Defaults to <name>-subnet."
+  description = "Defaults to `<name>-subnet`."
   type        = string
   default     = null
 }
@@ -62,9 +63,10 @@ variable "existing_private_dns_zone_id" {
 # --- Server ---------------------------------------------------------------------------------------
 
 variable "postgres_version" {
-  type     = string
-  default  = "18"
-  nullable = false
+  description = "Postgres major version."
+  type        = string
+  default     = "18"
+  nullable    = false
 }
 
 variable "sku_name" {
@@ -96,9 +98,10 @@ variable "storage" {
 }
 
 variable "backup_retention_days" {
-  type     = number
-  default  = 14
-  nullable = false
+  description = "Days the server's backups are kept, 7 to 35."
+  type        = number
+  default     = 14
+  nullable    = false
 
   validation {
     condition     = var.backup_retention_days >= 7 && var.backup_retention_days <= 35
@@ -192,7 +195,8 @@ variable "key_vault_id" {
 }
 
 variable "tags" {
-  type     = map(string)
-  default  = {}
-  nullable = false
+  description = "Applied to every taggable resource this module creates."
+  type        = map(string)
+  default     = {}
+  nullable    = false
 }

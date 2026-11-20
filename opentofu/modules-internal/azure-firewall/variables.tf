@@ -4,11 +4,13 @@ variable "name" {
 }
 
 variable "resource_group_name" {
-  type = string
+  description = "Resource group the firewall, its policy and its two public IPs are created in."
+  type        = string
 }
 
 variable "region" {
-  type = string
+  description = "Region of the firewall. Must match the VNet's."
+  type        = string
 }
 
 variable "vnet_id" {
@@ -69,11 +71,13 @@ variable "sku_tier" {
 }
 
 variable "availability_zones" {
-  type    = list(string)
-  default = ["1", "2", "3"]
+  description = "Zones the firewall and its public IPs are spread across."
+  type        = list(string)
+  default     = ["1", "2", "3"]
 }
 
 variable "tags" {
-  type    = map(string)
-  default = {}
+  description = "Applied to every taggable resource this module creates."
+  type        = map(string)
+  default     = {}
 }

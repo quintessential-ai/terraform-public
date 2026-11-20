@@ -4,7 +4,7 @@ variable "resource_group_name" {
 }
 
 variable "dns_zone" {
-  description = "Child zone to create, named \"<prefix>.<parent_zone_name>\"."
+  description = "Child zone to create, named `<prefix>.<parent_zone_name>`."
   type = object({
     prefix           = string
     parent_zone_name = string
@@ -34,11 +34,13 @@ variable "dns_parent_zone_resource_group_name" {
 }
 
 variable "ns_record_ttl" {
-  type    = number
-  default = 3600
+  description = "TTL, in seconds, of the NS record written into the parent zone when dns_enable_delegation is set."
+  type        = number
+  default     = 3600
 }
 
 variable "tags" {
-  type    = map(string)
-  default = {}
+  description = "Applied to every taggable resource this module creates."
+  type        = map(string)
+  default     = {}
 }

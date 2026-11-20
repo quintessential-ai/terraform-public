@@ -73,6 +73,13 @@ variable "features" {
   }
 }
 
+variable "case_mail_lookup_enabled" {
+  description = "Ask for Mail.ReadBasic and Mail.ReadBasic.Shared on Complexio - Backend for case email lookup as the signed-in user. An Entra administrator approves them; later applies keep that approval while enabled. Setting false removes the request and any managed tenant-wide approval."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
 variable "additional_application_permissions" {
   description = "Further Microsoft Graph application permissions for Complexio - Backend, by name, such as \"Sites.Read.All\". Only add what Complexio has asked for."
   type        = set(string)
@@ -150,7 +157,7 @@ variable "access_group_name_prefix" {
 }
 
 variable "stevie_departments" {
-  description = "Departments to create a Stevie access group for, named \"<prefix>-stevie-<department>\". Only used with create_and_assign_access_groups."
+  description = "Departments to create a Stevie access group for, named `<prefix>-stevie-<department>`. Only used with create_and_assign_access_groups."
   type        = list(string)
   default     = []
 

@@ -4,7 +4,8 @@ resource "random_uuid" "backend_access_as_user" {}
 # The registration Complexio's services use to reach Microsoft 365, with the application
 # permissions of the features you switch on, and the delegated ones Stevie uses as the signed-in
 # user. It also asks for mail drafting and sending unless those switches are false, for an Entra
-# administrator to approve; the install itself never grants them. It exposes one scope,
+# administrator to approve; enabled case mail lookup also asks for basic mail reads.
+# The install itself never grants these permissions. It exposes one scope,
 # access_as_user, which Complexio - SSO asks for to reach Microsoft 365 as the signed-in user.
 # Admins and users may consent to it, but nobody is asked: Complexio - SSO is pre-authorized for
 # it, and consented for everyone in sso.tf.
@@ -133,7 +134,7 @@ resource "azuread_app_role_assignment" "backend_graph" {
 
 # Complexio - Backend's tenant-wide Microsoft Graph grant as it stands, read whenever the install
 # holds one. An approval writes into this same grant, so the grant below keeps the approvable mail
-# write it finds here, and the check after it warns about approved mail write the configuration
+# write and case mail lookup it finds here, and the check after it warns about approved mail write the configuration
 # removes. It is read at plan time, except when the same apply creates or replaces Complexio -
 # Backend's service principal (a first install), when it is read during the apply: an approval
 # given between a plan read and its apply is not seen, and an apply that changes the grant removes
@@ -145,7 +146,7 @@ resource "azuread_app_role_assignment" "backend_graph" {
 # failed to evaluate) stops the plan rather than reading as "nothing approved", which would remove
 # every approval.
 data "msgraph_resource" "backend_graph_grant" {
-  count = length(local.known_backend_delegated_permissions) > 0 ? 1 : 0
+  count = local.backend_graph_grant_enabled ? 1 : 0
 
   url = "servicePrincipals/${azuread_service_principal.backend.object_id}/oauth2PermissionGrants"
   response_export_values = {
@@ -172,18 +173,19 @@ locals {
   backend_granted_scopes     = toset(compact(split(" ", local.backend_granted_scope == null ? "" : local.backend_granted_scope)))
   approved_mail_write_scopes = setintersection(local.approvable_mail_write, local.backend_granted_scopes)
   # Stevie sends only drafts it wrote, so Mail.Send is kept only alongside Mail.ReadWrite.
-  approved_mail_write  = contains(local.approved_mail_write_scopes, "Mail.ReadWrite") ? local.approved_mail_write_scopes : setsubtract(local.approved_mail_write_scopes, ["Mail.Send"])
-  backend_grant_claims = setunion(local.known_backend_delegated_permissions, local.approved_mail_write)
+  approved_mail_write       = contains(local.approved_mail_write_scopes, "Mail.ReadWrite") ? local.approved_mail_write_scopes : setsubtract(local.approved_mail_write_scopes, ["Mail.Send"])
+  approved_case_mail_lookup = setintersection(local.approvable_case_mail_lookup, local.backend_granted_scopes)
+  backend_grant_claims      = setunion(local.known_backend_delegated_permissions, local.approved_mail_write, local.approved_case_mail_lookup)
   # Approved mail write the grant below drops. The check after it reports it when a switch is false.
   removed_mail_write = setsubtract(setintersection(local.mail_write_permissions, local.backend_granted_scopes), local.approved_mail_write)
 }
 
 # Admin consent for Complexio - Backend's delegated permissions, when any feature needs them, plus
-# the mail write an administrator approved. Anything else added outside the install is removed.
+# the mail write and case mail lookup an administrator approved. Anything else added outside the install is removed.
 # `count` depends on the configuration only, so a first install, whose grant can't be read until
 # Complexio - Backend exists, still plans.
 resource "azuread_service_principal_delegated_permission_grant" "backend_graph" {
-  count = length(local.known_backend_delegated_permissions) > 0 ? 1 : 0
+  count = local.backend_graph_grant_enabled ? 1 : 0
 
   service_principal_object_id          = azuread_service_principal.backend.object_id
   resource_service_principal_object_id = data.azuread_service_principal.msgraph.object_id

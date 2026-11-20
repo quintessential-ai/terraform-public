@@ -176,6 +176,21 @@ without a signed-in user.
 asks for them. It refuses mailbox, calendar and contact permissions, which would reach every
 mailbox in your tenant.
 
+### Case email lookup
+
+Set `case_mail_lookup_enabled = true` (outside `features`) to have Complexio - Backend ask
+for delegated `Mail.ReadBasic` and `Mail.ReadBasic.Shared`. The default is `false`.
+These permissions find emails referenced by a case and read their senders in the signed-in
+user's own mailbox or a shared mailbox they can open, without bodies or attachments.
+Complexio - SSO never requests them, and they work independently of the Stevie switches.
+
+The Terraform setup requests these permissions without granting them. An Entra administrator
+approves them through Complexio Settings or **Grant admin consent** on Backend's
+**API permissions** page. Later applies preserve that tenant-wide approval while the switch
+is enabled. Revoking consent does not cause the setup to grant it again. Setting the switch
+to `false` removes the request and any tenant-wide approval managed by this setup; it does
+not remove users' own consent.
+
 ### Mail drafting and sending
 
 Whether Stevie may write and send mail as the user is your Entra administrator's decision, not the

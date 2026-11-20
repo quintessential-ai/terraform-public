@@ -2,7 +2,8 @@
 
 Creates the network, the private AKS cluster and the Azure resources Complexio runs on in the
 customer's subscription. This page covers the network appliance the cluster's traffic goes
-through, and bootstrapping the cluster.
+through, and bootstrapping the cluster. Every variable, with its default and whether it is
+required, is listed in [VARIABLES.md](VARIABLES.md).
 
 ## Network appliance
 
@@ -16,7 +17,8 @@ public IP. The appliance forwards HTTPS from its public IP to the cluster's priv
 - `existing`: the customer's own network appliance. See below.
 
 With the first two, the `network_appliance_public_ip_address` output is where all egress comes from
-and where the application DNS records point.
+and where HTTPS comes in. The `ingress_endpoint` output is the IP or DNS name for
+HTTPS ingress with any of the three, and the application's DNS records point at it.
 
 It can be changed on an existing cluster, for example to the customer's own firewall later.
 
@@ -75,9 +77,13 @@ existing_network_appliance_private_ip = "<appliance private IP>"
 existing_network_appliance_vnet_id    = "<appliance VNet resource ID>"
 # Only when the appliance's VNet is in another subscription:
 existing_network_appliance_subscription_id = "<appliance VNet subscription ID>"
+# Public IP or DNS name of the appliance. Required with dns_zone.
+existing_network_appliance_public_endpoint = "<appliance public IP or DNS name>"
 ```
 
-After apply, point the application DNS records at the appliance's public IP.
+With `dns_zone`, the application's DNS records in the child zone point at
+`existing_network_appliance_public_endpoint`, as an `A` record for an IP or a `CNAME` for a DNS name.
+Without it, point the application's DNS records at the appliance's public IP after apply.
 
 ## Bootstrap
 

@@ -1,10 +1,12 @@
 variable "cluster_name" {
-  type    = string
-  default = "complexio-aks"
+  description = "Name of the AKS cluster and its VNet; also the base of the generated resource names."
+  type        = string
+  default     = "complexio-aks"
 }
 
 variable "region" {
-  type = string
+  description = "Azure region, e.g. westeurope."
+  type        = string
 }
 
 variable "customer_name" {
@@ -37,28 +39,33 @@ variable "existing_resource_group_name" {
 }
 
 variable "kubernetes_version" {
-  type    = string
-  default = "1.36"
+  description = "AKS Kubernetes version."
+  type        = string
+  default     = "1.36"
 }
 
 variable "managed_cluster_sku_tier" {
-  type    = string
-  default = "Standard"
+  description = "AKS pricing tier."
+  type        = string
+  default     = "Standard"
 }
 
 variable "availability_zones" {
-  type    = list(string)
-  default = ["1", "2", "3"]
+  description = "Zones the core nodes and the network appliance Terraform creates are spread across."
+  type        = list(string)
+  default     = ["1", "2", "3"]
 }
 
 variable "core_worker_pool_vm_size" {
-  type    = string
-  default = "Standard_B2s_v2"
+  description = "VM size of the core node pool."
+  type        = string
+  default     = "Standard_B2s_v2"
 }
 
 variable "core_worker_pool_os_disk_size" {
-  type    = number
-  default = 64
+  description = "OS disk size of the core node pool, in GB."
+  type        = number
+  default     = 64
 }
 
 variable "node_provisioning_mode" {
@@ -68,8 +75,9 @@ variable "node_provisioning_mode" {
 }
 
 variable "enable_azure_container_storage" {
-  type    = bool
-  default = true
+  description = "Turn on Azure Container Storage."
+  type        = bool
+  default     = true
 }
 
 # --- Networking ---------------------------------------------------------------------------------
@@ -81,8 +89,9 @@ variable "existing_vnet_name" {
 }
 
 variable "existing_vnet_resource_group_name" {
-  type    = string
-  default = null
+  description = "Resource group of existing_vnet_name. Defaults to the cluster's resource group."
+  type        = string
+  default     = null
 }
 
 variable "vnet_cidr" {
@@ -240,6 +249,27 @@ variable "existing_network_appliance_vnet_id" {
   }
 }
 
+variable "existing_network_appliance_public_endpoint" {
+  description = "Public IPv4 address or DNS name of the existing network appliance, for HTTPS ingress. Required when network_appliance is \"existing\" and dns_zone is set."
+  type        = string
+  default     = null
+
+  validation {
+    condition = (
+      var.existing_network_appliance_public_endpoint == null
+      || can(cidrhost("${var.existing_network_appliance_public_endpoint}/32", 0))
+      || can(regex("^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\\.)+[a-zA-Z]([a-zA-Z0-9-]*[a-zA-Z0-9])?$", var.existing_network_appliance_public_endpoint))
+    )
+    error_message = "existing_network_appliance_public_endpoint must be an IPv4 address or a DNS name, such as \"20.0.0.1\" or \"ingress.example.com\", with no scheme, port or path."
+  }
+
+  # Without it, ExternalDNS has no public address to point the DNS records at.
+  validation {
+    condition     = var.network_appliance != "existing" || var.dns_zone == null || var.existing_network_appliance_public_endpoint != null
+    error_message = "Set existing_network_appliance_public_endpoint when network_appliance is \"existing\" and dns_zone is set."
+  }
+}
+
 # --- Access -------------------------------------------------------------------------------------
 
 variable "azure_rbac" {
@@ -338,7 +368,7 @@ variable "create_postgres" {
 }
 
 variable "postgres_name" {
-  description = "Server names are globally unique (<name>.postgres.database.azure.com), so a custom name is often necessary. Defaults to <cluster_name>-pg-<random_string>."
+  description = "Server names are globally unique (`<name>.postgres.database.azure.com`), so a custom name is often necessary. Defaults to `<cluster_name>-pg-<random_string>`."
   type        = string
   default     = null
 
@@ -418,8 +448,9 @@ variable "postgres_maintenance_window" {
 }
 
 variable "postgres_administrator_login" {
-  type    = string
-  default = "complexio"
+  description = "Administrator user name."
+  type        = string
+  default     = "complexio"
 }
 
 variable "postgres_administrator_password_version" {
@@ -463,7 +494,7 @@ variable "create_blob_storage" {
 }
 
 variable "blob_storage_account_name" {
-  description = "Account names are globally unique (<name>.blob.core.windows.net), so a custom name is often necessary. Defaults to the cluster name's letters and digits followed by a random string."
+  description = "Account names are globally unique (`<name>.blob.core.windows.net`), so a custom name is often necessary. Defaults to the cluster name's letters and digits followed by a random string."
   type        = string
   default     = null
 
@@ -505,7 +536,7 @@ variable "blob_storage_existing_private_dns_zone_id" {
 # --- DNS ----------------------------------------------------------------------------------------
 
 variable "dns_zone" {
-  description = "Child zone to create, named \"<prefix>.<parent_zone_name>\". Leave unset to not manage DNS."
+  description = "Child zone to create, named `<prefix>.<parent_zone_name>`. Leave unset to not manage DNS."
   type = object({
     prefix           = string
     parent_zone_name = string
@@ -543,7 +574,7 @@ variable "dns_parent_zone_resource_group_name" {
 # --- Bootstrap ----------------------------------------------------------------------------------
 
 variable "external_key_vault" {
-  description = "Given by Complexio: the Key Vault it creates for this customer in its own tenant, by name (the <name> in https://<name>.vault.azure.net), and the client ID of the identity ExternalSecrets reads it with. The bootstrap points ExternalSecrets at it to get the ACR token Flux pulls the top-level artifact with."
+  description = "Given by Complexio: the Key Vault it creates for this customer in its own tenant, by name (the `<name>` in `https://<name>.vault.azure.net`), and the client ID of the identity ExternalSecrets reads it with. The bootstrap points ExternalSecrets at it to get the ACR token Flux pulls the top-level artifact with."
   type = object({
     external_secrets_client_id = string
     name                       = string

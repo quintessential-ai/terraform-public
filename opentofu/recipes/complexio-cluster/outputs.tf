@@ -48,6 +48,11 @@ output "network_appliance_public_ip_address" {
   value = local.outputs.network_appliance_public_ip_address
 }
 
+# IP or DNS name for HTTPS ingress. ExternalDNS points the DNS records at it.
+output "ingress_endpoint" {
+  value = local.outputs.ingress_endpoint
+}
+
 # The target of the network appliance's DNAT rule, and the gateway Service's IP.
 output "ingress_lb_private_ip" {
   value = local.outputs.ingress_lb_private_ip

@@ -4,11 +4,12 @@ variable "vnet_name" {
 }
 
 variable "resource_group_name" {
-  type = string
+  description = "Resource group the VNet is created in. existing_vnet_name is looked up in it too, unless existing_vnet_resource_group_name is set."
+  type        = string
 }
 
 variable "region" {
-  description = "Region of the VNet and the egress route table."
+  description = "Region of the VNet."
   type        = string
 }
 
@@ -75,6 +76,7 @@ variable "peerings" {
 }
 
 variable "tags" {
-  type    = map(string)
-  default = {}
+  description = "Applied to every taggable resource this module creates."
+  type        = map(string)
+  default     = {}
 }

@@ -1,5 +1,6 @@
 variable "cluster_name" {
-  type = string
+  description = "Name of the AKS cluster; its identity is named after it."
+  type        = string
 }
 
 variable "region" {
@@ -13,8 +14,9 @@ variable "resource_group_name" {
 }
 
 variable "kubernetes_version" {
-  type    = string
-  default = null
+  description = "Kubernetes version of the control plane and the core node pool. AKS picks its default version when null."
+  type        = string
+  default     = null
 }
 
 variable "sku_tier" {
@@ -84,18 +86,21 @@ variable "network_appliance_ip" {
 # Overlay ranges, internal to the cluster. They do not consume VNet address space.
 
 variable "pod_cidr" {
-  type    = string
-  default = "172.16.0.0/16"
+  description = "Range the pods take their IPs from. With Azure CNI Overlay it is not part of the VNet's address space."
+  type        = string
+  default     = "172.16.0.0/16"
 }
 
 variable "service_cidr" {
-  type    = string
-  default = "172.17.0.0/16"
+  description = "Range the Kubernetes Services take their cluster IPs from."
+  type        = string
+  default     = "172.17.0.0/16"
 }
 
 variable "dns_service_ip" {
-  type    = string
-  default = "172.17.255.254"
+  description = "Cluster IP of the cluster's DNS service. Must be in service_cidr."
+  type        = string
+  default     = "172.17.255.254"
 
   validation {
     condition     = try(cidrhost("${var.dns_service_ip}/${split("/", var.service_cidr)[1]}", 0) == cidrhost(var.service_cidr, 0), false)
@@ -117,13 +122,15 @@ variable "core_pool_vm_size" {
 }
 
 variable "core_pool_node_count" {
-  type    = number
-  default = 2
+  description = "Nodes in the core node pool, which does not autoscale."
+  type        = number
+  default     = 2
 }
 
 variable "core_pool_os_disk_size_gb" {
-  type    = number
-  default = 128
+  description = "OS disk size of each core node, in GB. It also holds the container images and emptyDir volumes."
+  type        = number
+  default     = 128
 }
 
 # --- RBAC Access to the cluster ------------------------------------------------------------------
@@ -166,6 +173,7 @@ variable "acr_ids" {
 }
 
 variable "tags" {
-  type    = map(string)
-  default = {}
+  description = "Applied to every taggable resource this module creates."
+  type        = map(string)
+  default     = {}
 }

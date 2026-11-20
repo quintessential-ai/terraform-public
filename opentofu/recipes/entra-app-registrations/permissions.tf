@@ -16,6 +16,9 @@
 # Microsoft Graph token it gets for a user carries all of its delegated permissions, so Mail.Send
 # there is what lets Stevie send the drafts it writes.
 #
+# Case mail lookup asks for basic mail reads on Complexio - Backend only when enabled; an Entra
+# administrator approves them, and later applies keep that approval while enabled.
+#
 # Every sign-in also needs openid, profile, email and offline_access to identify the user and keep
 # them signed in, and User.Read to read their profile.
 locals {
@@ -93,6 +96,14 @@ locals {
     }
   }
 
+  case_mail_lookup_delegated_permissions_by_feature = {
+    case_mail_lookup_enabled = {
+      "Mail.ReadBasic"        = "Find an email a case names in the user's own mailbox and read who sent it, without its body or attachments (GET /me/messages?$filter=internetMessageId eq …)."
+      "Mail.ReadBasic.Shared" = "Find an email a case names in a shared mailbox the user can open and read who sent it, without its body or attachments (GET /users/{id}/messages?$filter=internetMessageId eq …)."
+    }
+  }
+  case_mail_lookup_permissions = var.case_mail_lookup_enabled ? toset(keys(local.case_mail_lookup_delegated_permissions_by_feature.case_mail_lookup_enabled)) : toset([])
+
   application_permissions = setunion(var.additional_application_permissions, flatten([
     for feature, permissions in local.application_permissions_by_feature : keys(permissions) if var.features[feature] == true
   ]))
@@ -108,7 +119,7 @@ locals {
   graph_scope_ids = data.azuread_service_principal.msgraph.oauth2_permission_scope_ids
 
   unknown_application_permissions     = setsubtract(local.application_permissions, keys(local.graph_role_ids))
-  unknown_delegated_permissions       = setsubtract(setunion(local.sso_delegated_permissions, local.backend_delegated_permissions, local.sign_in_permissions), keys(local.graph_scope_ids))
+  unknown_delegated_permissions       = setsubtract(setunion(local.sso_delegated_permissions, local.backend_delegated_permissions, local.sign_in_permissions, local.case_mail_lookup_permissions), keys(local.graph_scope_ids))
   known_application_permissions       = setsubtract(local.application_permissions, local.unknown_application_permissions)
   known_sso_delegated_permissions     = setsubtract(local.sso_delegated_permissions, local.unknown_delegated_permissions)
   known_backend_delegated_permissions = setsubtract(local.backend_delegated_permissions, local.unknown_delegated_permissions)
@@ -126,5 +137,7 @@ locals {
   approvable_mail_write = length(local.known_backend_delegated_permissions) == 0 ? toset([]) : setintersection(flatten([
     for feature, permissions in local.mail_write_delegated_permissions_by_feature : keys(permissions) if local.mail_write_switches[feature] == null
   ]), keys(local.graph_scope_ids))
-  backend_requested_delegated_permissions = setunion(local.known_backend_delegated_permissions, local.approvable_mail_write)
+  approvable_case_mail_lookup             = setsubtract(local.case_mail_lookup_permissions, local.unknown_delegated_permissions)
+  backend_graph_grant_enabled             = length(setunion(local.known_backend_delegated_permissions, local.approvable_case_mail_lookup)) > 0
+  backend_requested_delegated_permissions = setunion(local.known_backend_delegated_permissions, local.approvable_mail_write, local.approvable_case_mail_lookup)
 }

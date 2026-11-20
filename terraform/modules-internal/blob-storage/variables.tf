@@ -1,5 +1,5 @@
 variable "name" {
-  description = "Globally unique: it becomes <name>.blob.core.windows.net."
+  description = "Globally unique: it becomes `<name>.blob.core.windows.net`."
   type        = string
 
   validation {
@@ -9,7 +9,8 @@ variable "name" {
 }
 
 variable "resource_group_name" {
-  type = string
+  description = "Resource group the storage account and its private endpoint are created in, and the private DNS zone when one is created."
+  type        = string
 }
 
 variable "region" {
@@ -25,7 +26,7 @@ variable "vnet_id" {
 }
 
 variable "subnet_name" {
-  description = "Defaults to <name>-subnet."
+  description = "Defaults to `<name>-subnet`."
   type        = string
   default     = null
 }
@@ -94,7 +95,8 @@ variable "container_names" {
 }
 
 variable "tags" {
-  type     = map(string)
-  default  = {}
-  nullable = false
+  description = "Applied to every taggable resource this module creates."
+  type        = map(string)
+  default     = {}
+  nullable    = false
 }

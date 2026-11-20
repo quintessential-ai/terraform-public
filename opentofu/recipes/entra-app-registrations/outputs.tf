@@ -55,12 +55,12 @@ output "sso_delegated_permissions" {
 }
 
 output "backend_delegated_permissions" {
-  description = "Microsoft Graph delegated permissions the install grants Complexio - Backend. Mail write an Entra administrator approved is kept besides these."
+  description = "Microsoft Graph delegated permissions the install grants Complexio - Backend. Mail write and enabled case mail lookup an Entra administrator approved are kept besides these."
   value       = sort(local.known_backend_delegated_permissions)
 }
 
 output "backend_requested_delegated_permissions" {
-  description = "Microsoft Graph delegated permissions Complexio - Backend asks for: those granted above, plus the mail write left to an Entra administrator to approve."
+  description = "Microsoft Graph delegated permissions Complexio - Backend asks for: those granted above, plus mail write and enabled case mail lookup left to an Entra administrator to approve."
   value       = sort(local.backend_requested_delegated_permissions)
 }
 

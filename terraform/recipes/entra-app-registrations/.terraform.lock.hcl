@@ -5,6 +5,7 @@ provider "registry.terraform.io/hashicorp/azuread" {
   version     = "3.10.0"
   constraints = "~> 3.10"
   hashes = [
+    "h1:EpQO5p0pkCpJF4mjzYOCKdReCa91Wysre9hv06oyPlM=",
     "h1:La1a18zBjbK8JSILbKVX7OegQ563hsYetwgcNJn9JTA=",
     "h1:LebgA5m0DOZMsd2hUR8DYZ+I2HLuC4ChMX4dc0eIP/o=",
     "h1:h1Jm3oaq4HPOS+iJ+X7sEDPRZnuMTFsVWWlcP7CLk0Q=",
@@ -32,6 +33,7 @@ provider "registry.terraform.io/hashicorp/azurerm" {
     "h1:clt4ZAUZh3HKZXrIEHNAGeOibS+/ckYblATS3eT0Tfk=",
     "h1:d4Pss+4L4JJQEFbw6dgQlCc4IroeMHkMjfxab+RsSSQ=",
     "h1:dtP53nMWNUjil7VpjZ0vo9H0JTM3fewyGuzpVpAkgm0=",
+    "h1:hnGWGNJAEC+7KAJP/IR2g3J7tMfuYjElSPpwJzme8DA=",
     "zh:1c2dca15d1c24bcd98fb4d163bfcaad9cfb6cfda8b9965297fcaa918dfadc5f0",
     "zh:3d3ad0a26eb7058f61f412722bf9d03795eb23bf97d693fdc8cbebe830090116",
     "zh:44a755607e385f5811e6eb2f73016f9bab73340d138528da73bb0cf994f7524f",
@@ -51,6 +53,7 @@ provider "registry.terraform.io/hashicorp/random" {
   version     = "3.9.1"
   constraints = "~> 3.9"
   hashes = [
+    "h1:7uiStw0Rl9KOdX5UNMG/sp9nyadoD4LZekQTiYlYPhE=",
     "h1:PYbnOqRuGn4c0/Ae1f7yOS/0zvmXNHFJRZjuF4KECnM=",
     "h1:PlW+UZ4EElQF3NQwf41KQwavFujab3Czc51zu9dyVM8=",
     "h1:g40qr7yDmIpaur4SsK5BcOda3HSo1RJ6zHVMqN4EJ+0=",
@@ -79,6 +82,7 @@ provider "registry.terraform.io/hashicorp/time" {
     "h1:gnP2hptiFIHSHUFBvAFKhE/Yh5u5yVEx+P7XSB58A/E=",
     "h1:mwxQFMxGnM+Xm3F76yeHSAfPr3RZq/+XGT1vjgwiRWQ=",
     "h1:pmcYDG9dBx6l+2YQFP59egVwno/yf0l1QS56gl2PzLY=",
+    "h1:pzcwOL4EnAXPWkGDyq/RfnKLb/+iqIs1adLH22oUNTk=",
     "zh:0aa1028d91041f4dceba193e3707dac57358d0063d97e20700e554758b67baca",
     "zh:32bee9f2b2678e2a0789ad86e716d09ca1d5450180b3cd8033ee7a251bfd352e",
     "zh:3aded9ef4dc6f4aec202a50c68a08b40013d325f9947f10168ebc8bee54109fc",
@@ -99,6 +103,7 @@ provider "registry.terraform.io/microsoft/msgraph" {
   version     = "0.6.0"
   constraints = "~> 0.6.0"
   hashes = [
+    "h1:4Aj2nC458tnheteWhot9p5slrEC5UDHNenCMVSTy484=",
     "h1:7+pKrSEHkge6Ci4a5mCPEmhAZHms0mQYXO+DtI3AClQ=",
     "h1:Ms3h/lnltS+okrULgL/RR0PypjfRFHDS7ZQyoquw+kE=",
     "h1:VhBqm5+NXmOehaLtZMm+lCEV6bEgmxsgejY1d10vahI=",

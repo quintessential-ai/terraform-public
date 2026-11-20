@@ -4,7 +4,8 @@ variable "name_prefix" {
 }
 
 variable "resource_group_name" {
-  type = string
+  description = "Resource group the identity is created in."
+  type        = string
 }
 
 variable "region" {
@@ -56,6 +57,7 @@ variable "role_assignments" {
 }
 
 variable "tags" {
-  type    = map(string)
-  default = {}
+  description = "Applied to every taggable resource this module creates."
+  type        = map(string)
+  default     = {}
 }

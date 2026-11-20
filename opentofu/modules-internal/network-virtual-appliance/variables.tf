@@ -4,11 +4,13 @@ variable "name" {
 }
 
 variable "resource_group_name" {
-  type = string
+  description = "Resource group the instances' scale set, its load balancers, public IP and NSG are created in."
+  type        = string
 }
 
 variable "region" {
-  type = string
+  description = "Region of the appliance. Must match the VNet's."
+  type        = string
 }
 
 variable "vnet_id" {
@@ -71,6 +73,7 @@ variable "availability_zones" {
 }
 
 variable "tags" {
-  type    = map(string)
-  default = {}
+  description = "Applied to every taggable resource this module creates."
+  type        = map(string)
+  default     = {}
 }

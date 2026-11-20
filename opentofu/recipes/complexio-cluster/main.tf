@@ -157,6 +157,13 @@ locals {
     azure_firewall = one(module.azure_firewall[*].public_ip_address)
     existing       = null
   }[var.network_appliance]
+
+  # IP or DNS name for HTTPS ingress.
+  ingress_endpoint = (
+    var.network_appliance == "existing"
+    ? var.existing_network_appliance_public_endpoint
+    : local.network_appliance_public_ip_address
+  )
 }
 
 # --- Cluster ------------------------------------------------------------------------------------
@@ -571,12 +578,10 @@ module "bootstrap" {
 # --- Terraform inputs and outputs in Key Vault --------------------------------------------------
 
 locals {
-  # Every variable but the Postgres administrator password, which is a secret and, being ephemeral,
-  # cannot be stored anyway.
+  # Written by `tf_tools autofix`: every variable but the Postgres administrator password, which
+  # is ephemeral so can't be stored, and the removed ones NOT_IN_INPUTS lists in tf_tools'
+  # variables.py.
   inputs = {
-    subscription_id                            = var.subscription_id
-    dns_parent_zone_subscription_id            = var.dns_parent_zone_subscription_id
-    existing_network_appliance_subscription_id = var.existing_network_appliance_subscription_id
     cluster_name                               = var.cluster_name
     region                                     = var.region
     customer_name                              = var.customer_name
@@ -603,6 +608,7 @@ locals {
     network_appliance                          = var.network_appliance
     existing_network_appliance_private_ip      = var.existing_network_appliance_private_ip
     existing_network_appliance_vnet_id         = var.existing_network_appliance_vnet_id
+    existing_network_appliance_public_endpoint = var.existing_network_appliance_public_endpoint
     azure_rbac                                 = var.azure_rbac
     admin_groups                               = var.admin_groups
     docker_acr_registries                      = var.docker_acr_registries
@@ -638,6 +644,9 @@ locals {
     dns_parent_zone_resource_group_name        = var.dns_parent_zone_resource_group_name
     external_key_vault                         = var.external_key_vault
     tags                                       = var.tags
+    subscription_id                            = var.subscription_id
+    dns_parent_zone_subscription_id            = var.dns_parent_zone_subscription_id
+    existing_network_appliance_subscription_id = var.existing_network_appliance_subscription_id
   }
 
   # Every output, which outputs.tf reads from here.
@@ -654,6 +663,7 @@ locals {
     vnet_id                              = module.network.vnet_id
     nodes_subnet_cidr                    = local.subnet_cidrs.nodes
     network_appliance_public_ip_address  = local.network_appliance_public_ip_address
+    ingress_endpoint                     = local.ingress_endpoint
     ingress_lb_private_ip                = local.ingress_lb_private_ip
     key_vault_id                         = azurerm_key_vault.this.id
     key_vault_name                       = azurerm_key_vault.this.name

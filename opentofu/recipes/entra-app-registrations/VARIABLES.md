@@ -1,0 +1,25 @@
+# entra-app-registrations variables
+
+<!-- BEGIN_TF_DOCS -->
+## Inputs
+
+| Name | Description | Type | Default | Required |
+| ---- | ----------- | ---- | ------- | :------: |
+| browser\_hosts | Host names your users open Complexio on, such as "complexio.example.com". Sign-in redirects back to these hosts only. | `list(string)` | n/a | yes |
+| key\_vault\_id | Key Vault Complexio's services read their credentials from. The client secrets, the certificates and the IDs they need are written here. | `string` | n/a | yes |
+| subscription\_id | Subscription of the Key Vault the credentials are written to. | `string` | n/a | yes |
+| tenant\_id | Your Microsoft Entra tenant, where the app registrations are created. | `string` | n/a | yes |
+| access\_group\_name\_prefix | Prefix of the access group names, such as "complexio" in "complexio-owners". Change it to follow your own naming convention. | `string` | `"complexio"` | no |
+| additional\_application\_permissions | Further Microsoft Graph application permissions for Complexio - Backend, by name, such as "Sites.Read.All". Only add what Complexio has asked for. | `set(string)` | `[]` | no |
+| case\_mail\_lookup\_enabled | Ask for Mail.ReadBasic and Mail.ReadBasic.Shared on Complexio - Backend for case email lookup as the signed-in user. An Entra administrator approves them; later applies keep that approval while enabled. Setting false removes the request and any managed tenant-wide approval. | `bool` | `false` | no |
+| certificate\_validity\_in\_months | How long each certificate is valid. Certificates don't renew themselves: renew them before they expire. | `number` | `12` | no |
+| create\_and\_assign\_access\_groups | Create Complexio's standard security groups and assign them to Complexio - SSO, so their members can sign in. You manage who is in each group. | `bool` | `true` | no |
+| display\_names | Names of the two app registrations. Keep the defaults: one pair serves all your Complexio environments. | <pre>object({<br/>    sso     = optional(string, "Complexio - SSO")<br/>    backend = optional(string, "Complexio - Backend")<br/>  })</pre> | `{}` | no |
+| event\_hub\_namespace\_id | Resource ID of the Event Hubs namespace Microsoft Graph sends Teams change notifications to, such as "/subscriptions/<subscription\_id>/resourceGroups/<resource\_group>/providers/Microsoft.EventHub/namespaces/complexio-msgraph". Needed with teams\_ingestion\_where\_installed or teams\_ingestion\_tenant\_wide, and unused otherwise. It may be in another subscription than the Key Vault. | `string` | `null` | no |
+| features | What Complexio may do in your Microsoft 365 tenant. Each switch grants the Microsoft Graph<br/>permissions that feature needs, and nothing is granted for a switch left off. Switches ending<br/>in "\_delegated" let Stevie act as the signed-in user, limited to what that user can already<br/>see. The others let Complexio's services work without a signed-in user. The two mail write<br/>switches are the exception: the install only asks for them, and an Entra administrator<br/>approves them. | <pre>object({<br/>    email_ingestion                 = optional(bool, true)<br/>    teams_ingestion_where_installed = optional(bool, false)<br/>    teams_ingestion_tenant_wide     = optional(bool, false)<br/>    settings_directory              = optional(bool, true)<br/>    automator_email                 = optional(bool, false)<br/>    usage_metrics                   = optional(bool, true)<br/><br/>    stevie_mail_delegated       = optional(bool, true)<br/>    stevie_calendar_delegated   = optional(bool, true)<br/>    stevie_onedrive_delegated   = optional(bool, true)<br/>    stevie_people_delegated     = optional(bool, true)<br/>    stevie_meetings_delegated   = optional(bool, true)<br/>    stevie_teams_delegated      = optional(bool, true)<br/>    stevie_sharepoint_delegated = optional(bool, true)<br/><br/>    # Mail write: null (the default) has Complexio - Backend ask for it, and the install keeps it<br/>    # once an Entra administrator approves it. false neither asks for it nor keeps an approval.<br/>    stevie_mail_drafting_delegated = optional(bool)<br/>    stevie_mail_sending_delegated  = optional(bool)<br/>  })</pre> | `{}` | no |
+| key\_vault\_secret\_prefix | Prefix of every Key Vault entry written, followed by "--". Use a different one for each Complexio environment sharing the vault. | `string` | `"deployments"` | no |
+| mcp\_hosts | Host names of Complexio's MCP servers, if you use them. Leave empty otherwise. | `list(string)` | `[]` | no |
+| secret\_validity\_in\_days | How long each client secret is valid. Secrets don't renew themselves: renew them before they expire. | `number` | `365` | no |
+| stevie\_departments | Departments to create a Stevie access group for, named `<prefix>-stevie-<department>`. Only used with create\_and\_assign\_access\_groups. | `list(string)` | `[]` | no |
+| tags | Applied to the Key Vault entries it writes. | `map(string)` | `{}` | no |
+<!-- END_TF_DOCS -->
